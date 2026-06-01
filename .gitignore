@@ -1,0 +1,14 @@
+# Spiegel-Zielverzeichnis (gespiegelte Repos gehören nicht ins Git)
+/repos/
+
+# Lokales Start-Skript mit Token / Zugangsdaten
+/run.sh
+.env
+
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+dist/
+*.egg-info/
+.pytest_cache/

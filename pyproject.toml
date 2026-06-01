@@ -1,0 +1,38 @@
+[project]
+name = "gitlab-mirror"
+version = "0.1.0"
+description = "Create and update pull mirrors of all repositories of a GitLab instance"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Stefan Schönberger", email = "stefan@sniner.dev" }]
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+    "httpx>=0.28.1",
+]
+
+[project.scripts]
+gitlab-mirror = "gitlab_mirror.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "respx>=0.21",
+]
+
+[tool.ruff]
+line-length = 90
+
+[tool.basedpyright]
+typeCheckingMode = "standard"
