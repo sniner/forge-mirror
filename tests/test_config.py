@@ -3,14 +3,16 @@ from pathlib import Path
 
 import pytest
 
-from gitlab_mirror.config import build_config
+from forge_mirror.config import build_config
 
 
 def make_args(**overrides: object) -> argparse.Namespace:
     defaults: dict[str, object] = {
-        "gitlab_url": None,
+        "provider": "gitlab",
+        "url": None,
         "token": None,
         "target_dir": None,
+        "owner": None,
         "ssh": False,
         "include_archived": False,
         "jobs": 4,
@@ -20,63 +22,86 @@ def make_args(**overrides: object) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
+def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in ("GITLAB_URL", "GITHUB_URL", "GITLAB_TOKEN", "GITHUB_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("FORGE_MIRROR_DIR", raising=False)
+
+
 def test_args_take_precedence_over_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GITLAB_URL", "https://env.example")
     monkeypatch.setenv("GITLAB_TOKEN", "env-token")
-    monkeypatch.setenv("GITLAB_MIRROR_DIR", "/env/dir")
+    monkeypatch.setenv("FORGE_MIRROR_DIR", "/env/dir")
 
     config = build_config(
-        make_args(
-            gitlab_url="https://arg.example",
-            token="arg-token",
-            target_dir="/arg/dir",
-        )
+        make_args(url="https://arg.example", token="arg-token", target_dir="/arg/dir")
     )
 
-    assert config.gitlab_url == "https://arg.example"
+    assert config.base_url == "https://arg.example"
     assert config.token == "arg-token"
     assert config.target_dir == Path("/arg/dir")
 
 
-def test_falls_back_to_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_falls_back_to_provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
     monkeypatch.setenv("GITLAB_URL", "https://env.example")
     monkeypatch.setenv("GITLAB_TOKEN", "env-token")
-    monkeypatch.setenv("GITLAB_MIRROR_DIR", "/env/dir")
+    monkeypatch.setenv("FORGE_MIRROR_DIR", "/env/dir")
 
     config = build_config(make_args())
 
-    assert config.gitlab_url == "https://env.example"
+    assert config.base_url == "https://env.example"
     assert config.token == "env-token"
     assert config.target_dir == Path("/env/dir")
 
 
+def test_github_token_env_is_separate(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("GITLAB_TOKEN", "gl-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "gh-token")
+
+    config = build_config(make_args(provider="github", target_dir="/d"))
+
+    assert config.token == "gh-token"
+
+
+def test_github_defaults_to_public_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    config = build_config(make_args(provider="github", token="t", target_dir="/d"))
+    assert config.base_url == "https://api.github.com"
+
+
 def test_url_is_normalised(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GITLAB_URL", raising=False)
+    _clear_env(monkeypatch)
     config = build_config(
-        make_args(
-            gitlab_url="https://gl.example/",
-            token="t",
-            target_dir="/d",
-        )
+        make_args(url="https://gl.example/", token="t", target_dir="/d")
     )
-    assert config.gitlab_url == "https://gl.example"
+    assert config.base_url == "https://gl.example"
 
 
 def test_missing_required_values_raise(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in ("GITLAB_URL", "GITLAB_TOKEN", "GITLAB_MIRROR_DIR"):
-        monkeypatch.delenv(var, raising=False)
-
+    _clear_env(monkeypatch)
     with pytest.raises(ValueError, match="Missing required options"):
         build_config(make_args())
 
 
+def test_gitlab_requires_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    with pytest.raises(ValueError, match="--url"):
+        build_config(make_args(token="t", target_dir="/d"))
+
+
+def test_owner_only_allowed_for_github(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    with pytest.raises(ValueError, match="--owner"):
+        build_config(
+            make_args(url="https://gl.example", token="t", target_dir="/d", owner="x")
+        )
+
+
 def test_invalid_jobs_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
     with pytest.raises(ValueError, match="--jobs"):
         build_config(
-            make_args(
-                gitlab_url="https://gl.example",
-                token="t",
-                target_dir="/d",
-                jobs=0,
-            )
+            make_args(url="https://gl.example", token="t", target_dir="/d", jobs=0)
         )

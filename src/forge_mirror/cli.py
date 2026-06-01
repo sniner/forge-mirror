@@ -1,37 +1,49 @@
-"""Command-line entry point for gitlab-mirror."""
+"""Command-line entry point for forge-mirror."""
 
 import argparse
 import logging
 
 import httpx
 
-from gitlab_mirror import __version__
-from gitlab_mirror.config import build_config
-from gitlab_mirror.gitlab import GitLabClient
-from gitlab_mirror.mirror import sync_all
+from forge_mirror import __version__
+from forge_mirror.config import build_config
+from forge_mirror.mirror import sync_all
+from forge_mirror.providers import PROVIDERS, create_provider
 
-logger = logging.getLogger("gitlab_mirror")
+logger = logging.getLogger("forge_mirror")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="gitlab-mirror",
-        description="Mirror all repositories of a GitLab instance as bare "
-        "mirrors and update existing ones.",
+        prog="forge-mirror",
+        description="Mirror all repositories of a Git forge (GitLab or GitHub) "
+        "as bare mirrors and update existing ones.",
     )
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument(
-        "--gitlab-url",
-        help="Base URL of the GitLab instance (env: GITLAB_URL)",
+        "--provider",
+        choices=PROVIDERS,
+        default="gitlab",
+        help="Forge to mirror from (default: gitlab)",
+    )
+    parser.add_argument(
+        "--url",
+        help="Base URL of the forge API "
+        "(env: GITLAB_URL/GITHUB_URL; GitHub defaults to https://api.github.com)",
     )
     parser.add_argument(
         "--token",
-        help="Personal/project access token (env: GITLAB_TOKEN)",
+        help="Personal/project access token (env: GITLAB_TOKEN/GITHUB_TOKEN)",
     )
     parser.add_argument(
         "-d",
         "--target-dir",
-        help="Target directory for the mirrors (env: GITLAB_MIRROR_DIR)",
+        help="Target directory for the mirrors (env: FORGE_MIRROR_DIR)",
+    )
+    parser.add_argument(
+        "--owner",
+        help="Restrict to a single GitHub user or organization "
+        "(GitHub only; default: all visible repositories)",
     )
     parser.add_argument(
         "--ssh",
@@ -41,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--include-archived",
         action="store_true",
-        help="Also mirror archived projects",
+        help="Also mirror archived repositories",
     )
     parser.add_argument(
         "-j",
@@ -81,10 +93,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        with GitLabClient(config.gitlab_url, config.token, config.timeout) as client:
-            result = sync_all(client, config)
+        with create_provider(config) as provider:
+            result = sync_all(provider, config)
     except httpx.HTTPError as exc:
-        logger.error("GitLab API error: %s", exc)
+        logger.error("%s API error: %s", config.provider, exc)
         return 1
 
     return min(result.failed, 125)

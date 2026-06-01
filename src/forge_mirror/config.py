@@ -5,18 +5,25 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-ENV_GITLAB_URL = "GITLAB_URL"
-ENV_TOKEN = "GITLAB_TOKEN"
-ENV_TARGET_DIR = "GITLAB_MIRROR_DIR"
+ENV_TARGET_DIR = "FORGE_MIRROR_DIR"
+
+# Provider-specific environment variables for token and base URL.
+_ENV_TOKEN = {"gitlab": "GITLAB_TOKEN", "github": "GITHUB_TOKEN"}
+_ENV_URL = {"gitlab": "GITLAB_URL", "github": "GITHUB_URL"}
+
+# GitHub has a single well-known API endpoint; GitLab is self-hosted.
+_DEFAULT_URL = {"github": "https://api.github.com"}
 
 
 @dataclass(frozen=True)
 class Config:
     """Fully resolved configuration for a single mirror run."""
 
-    gitlab_url: str
+    provider: str
+    base_url: str
     token: str
     target_dir: Path
+    owner: str | None
     use_ssh: bool
     include_archived: bool
     jobs: int
@@ -27,17 +34,20 @@ def build_config(args: argparse.Namespace) -> Config:
     """Build the config from argparse arguments, falling back to env variables.
 
     CLI arguments take precedence over environment variables. A ValueError is
-    raised if a required value is missing.
+    raised if a required value is missing or an option is used incorrectly.
     """
-    gitlab_url = args.gitlab_url or os.environ.get(ENV_GITLAB_URL)
-    token = args.token or os.environ.get(ENV_TOKEN)
+    provider = args.provider
+    token = args.token or os.environ.get(_ENV_TOKEN[provider])
+    base_url = (
+        args.url or os.environ.get(_ENV_URL[provider]) or _DEFAULT_URL.get(provider)
+    )
     target_dir = args.target_dir or os.environ.get(ENV_TARGET_DIR)
 
     missing = [
         name
         for name, value in (
-            ("--gitlab-url", gitlab_url),
             ("--token", token),
+            ("--url", base_url),
             ("--target-dir", target_dir),
         )
         if not value
@@ -48,15 +58,20 @@ def build_config(args: argparse.Namespace) -> Config:
             + ", ".join(missing)
             + " (set via argument or environment variable)"
         )
-    assert gitlab_url is not None and token is not None and target_dir is not None
+    assert token is not None and base_url is not None and target_dir is not None
+
+    if args.owner and provider != "github":
+        raise ValueError("--owner is only supported with --provider github")
 
     if args.jobs < 1:
         raise ValueError("--jobs must be at least 1")
 
     return Config(
-        gitlab_url=gitlab_url.rstrip("/"),
+        provider=provider,
+        base_url=base_url.rstrip("/"),
         token=token,
         target_dir=Path(target_dir).expanduser(),
+        owner=args.owner,
         use_ssh=args.ssh,
         include_archived=args.include_archived,
         jobs=args.jobs,
