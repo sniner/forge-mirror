@@ -34,7 +34,10 @@ via CLI argument or environment variable (arguments take precedence):
 
 The environment variable used for token and URL depends on the selected provider.
 For GitHub, `--url` defaults to `https://api.github.com` (set it to your GitHub
-Enterprise API endpoint, e.g. `https://ghe.example/api/v3`, when needed).
+Enterprise API endpoint, e.g. `https://ghe.example/api/v3`, when needed). A bare
+`https://github.com` is rewritten to `https://api.github.com`, since github.com
+serves its API from a separate host — unlike Enterprise, which uses `/api/v3` on
+the web host.
 
 ### GitLab
 
@@ -49,8 +52,10 @@ uv run forge-mirror \
 
 The token needs the `read_api` scope (for listing) and, when cloning over HTTPS,
 `read_repository`. In `--ssh` mode only `read_api` is required, since the Git
-transfer uses your SSH key. Note that `/projects` only returns the projects
-visible to the token, so use an admin account to mirror an entire instance.
+transfer uses your SSH key. Listing uses `membership=true`, so only projects the
+token's user belongs to are mirrored — on a self-hosted instance use an admin
+account to cover everything; on `gitlab.com` this avoids pulling in every public
+project on the platform.
 
 ### GitHub
 

@@ -3,6 +3,15 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com).
 
+## [0.2.1] - 2026-06-01
+
+### Fixed
+
+- **GitLab** listing now restricts to projects the token's user is a member of (`membership=true`);
+  on `gitlab.com` it previously paginated through every public project on the platform
+- **GitHub** a bare `https://github.com` URL is rewritten to `https://api.github.com`, avoiding a
+  `404` from the web host (Enterprise endpoints under `/api/v3` are unaffected)
+
 ## [0.2.0] - 2026-06-01
 
 ### Breaking changes

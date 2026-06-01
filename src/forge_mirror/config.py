@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -59,6 +60,16 @@ def build_config(args: argparse.Namespace) -> Config:
             + " (set via argument or environment variable)"
         )
     assert token is not None and base_url is not None and target_dir is not None
+
+    # github.com's API lives on api.github.com, not github.com itself (only
+    # GitHub Enterprise serves its API from the web host, under /api/v3).
+    if provider == "github":
+        base_url = re.sub(
+            r"^(https?://)(www\.)?github\.com/?$",
+            r"\1api.github.com",
+            base_url,
+            flags=re.IGNORECASE,
+        )
 
     if args.owner and provider != "github":
         raise ValueError("--owner is only supported with --provider github")

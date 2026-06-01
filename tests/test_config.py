@@ -71,6 +71,40 @@ def test_github_defaults_to_public_api(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.base_url == "https://api.github.com"
 
 
+@pytest.mark.parametrize(
+    "given",
+    [
+        "https://github.com",
+        "https://github.com/",
+        "https://www.github.com",
+        "http://github.com",
+    ],
+)
+def test_github_web_host_is_rewritten_to_api(
+    monkeypatch: pytest.MonkeyPatch, given: str
+) -> None:
+    _clear_env(monkeypatch)
+    config = build_config(
+        make_args(provider="github", url=given, token="t", target_dir="/d")
+    )
+    assert config.base_url.endswith("api.github.com")
+
+
+def test_github_enterprise_url_is_left_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_env(monkeypatch)
+    config = build_config(
+        make_args(
+            provider="github",
+            url="https://ghe.example/api/v3",
+            token="t",
+            target_dir="/d",
+        )
+    )
+    assert config.base_url == "https://ghe.example/api/v3"
+
+
 def test_url_is_normalised(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_env(monkeypatch)
     config = build_config(

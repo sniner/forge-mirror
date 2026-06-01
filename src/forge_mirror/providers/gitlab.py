@@ -17,6 +17,9 @@ class GitLabProvider(Provider):
         items = self._paginate_items(
             "/api/v4/projects",
             {
+                # Without this, gitlab.com returns every public project on the
+                # platform; restrict to projects the token's user belongs to.
+                "membership": "true",
                 "per_page": 100,
                 "statistics": "false",
                 "order_by": "id",

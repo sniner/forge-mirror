@@ -39,6 +39,17 @@ def test_clone_url_ssh_is_unchanged() -> None:
 
 
 @respx.mock
+def test_gitlab_iter_repos_filters_by_membership() -> None:
+    route = respx.get(
+        f"{GITLAB_URL}/api/v4/projects", params={"membership": "true"}
+    ).mock(return_value=httpx.Response(200, json=[_gitlab_item("grp/proj")]))
+    with GitLabProvider(GITLAB_URL, "t", 10.0) as provider:
+        list(provider.iter_repos())
+
+    assert route.called
+
+
+@respx.mock
 def test_gitlab_iter_repos_maps_fields() -> None:
     respx.get(f"{GITLAB_URL}/api/v4/projects").mock(
         return_value=httpx.Response(
