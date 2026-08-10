@@ -3,6 +3,20 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com).
 
+## [0.4.1] - 2026-08-10
+
+### Fixed
+
+- **API errors** now quote what the forge answered instead of only the status code, so a rejected
+  token names the scope it is missing rather than pointing at an HTTP reference page; a reply from
+  a reverse proxy in front of the forge is passed through as text and is recognisable as such
+- **Forgejo** the documented token scopes were wrong: the listing needs `read:user` **and**
+  `read:repository`, because Forgejo derives the required scope from the route group and the
+  endpoint sits under `/api/v1/user/`
+
+Forgejo support has since been verified against a live instance — listing, authentication, Link
+header pagination across 20 pages, and cloning over HTTPS.
+
 ## [0.4.0] - 2026-08-10
 
 ### Added

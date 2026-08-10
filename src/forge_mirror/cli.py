@@ -9,6 +9,7 @@ from forge_mirror import __version__
 from forge_mirror.config import build_config
 from forge_mirror.mirror import sync_all
 from forge_mirror.providers import PROVIDERS, create_provider
+from forge_mirror.providers.base import describe_http_error
 
 logger = logging.getLogger("forge_mirror")
 
@@ -111,6 +112,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with create_provider(config) as provider:
             result = sync_all(provider, config)
+    except httpx.HTTPStatusError as exc:
+        logger.error("%s API error: %s", config.provider, describe_http_error(exc))
+        return 1
     except httpx.HTTPError as exc:
         logger.error("%s API error: %s", config.provider, exc)
         return 1

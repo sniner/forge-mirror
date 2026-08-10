@@ -89,13 +89,22 @@ uv run forge-mirror \
 Forgejo is self-hosted, so `--url` has no default; point it at the instance
 itself, the API path `/api/v1` is appended.
 
-The token needs exactly one scope: **`repository`** at **Read** level. It covers
-both the repository listing and the Git transfer over HTTPS, and none of the
-other categories (`admin`, `organization`, `package`, `misc`, …) is required —
-organisation repositories are listed under the repository scope as well. A token
+The token needs **two** scopes, both at **Read** level: **`user`** and
+**`repository`**. The `user` scope is the counter-intuitive one — Forgejo
+derives the required scope from the route group, and the listing endpoint is
+`/api/v1/user/repos`, so reaching it takes `read:user` on top of the
+`read:repository` that covers the repositories themselves and the Git transfer
+over HTTPS. Tick only one of them and the API answers `403` naming the other:
+
+```
+token does not have at least one of required scope(s): [read:user]
+```
+
+None of the remaining categories (`admin`, `organization`, `package`, `misc`, …)
+is required; organisation repositories are covered by `read:repository`. A token
 with no scope at all is refused even for public repositories. In `--ssh` mode
-the Git transfer uses your SSH key, but the listing still needs
-`read:repository`. Listing uses
+the Git transfer uses your SSH key, but the listing still needs both scopes.
+Listing uses
 `/api/v1/user/repos`, which returns the repositories the token's user owns plus
 those they reach as a collaborator or through an organisation team — public
 repositories of *other* users on the instance are not pulled in.

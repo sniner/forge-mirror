@@ -11,6 +11,33 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+def _error_detail(response: httpx.Response) -> str:
+    """The forge's own explanation of a failed request, if the body carries one.
+
+    GitLab, GitHub and Forgejo all put it under "message"; anything else is
+    passed through as trimmed text, which is what a reverse proxy in front of
+    the forge tends to answer with.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return " ".join(response.text.split())[:200]
+    if isinstance(body, dict):
+        for key in ("message", "error_description", "error"):
+            value = body.get(key)  # pyright: ignore[reportUnknownMemberType]
+            if isinstance(value, str) and value:
+                return value
+    return ""
+
+
+def describe_http_error(exc: httpx.HTTPStatusError) -> str:
+    """One line naming the request that failed and what the forge said about it."""
+    url = exc.request.url.copy_with(query=None)
+    summary = f"{exc.response.status_code} for {exc.request.method} {url}"
+    detail = _error_detail(exc.response)
+    return f"{summary}: {detail}" if detail else summary
+
+
 @dataclass(frozen=True)
 class Repo:
     """A repository to mirror, in provider-neutral form."""

@@ -2,7 +2,7 @@ import httpx
 import pytest
 import respx
 
-from forge_mirror.providers.base import Repo
+from forge_mirror.providers.base import Repo, describe_http_error
 from forge_mirror.providers.forgejo import ForgejoProvider
 from forge_mirror.providers.github import GitHubProvider
 from forge_mirror.providers.gitlab import GitLabProvider
@@ -206,6 +206,47 @@ def test_raises_on_http_error() -> None:
     with GitLabProvider(GITLAB_URL, "bad", 10.0) as provider:
         with pytest.raises(httpx.HTTPStatusError):
             list(provider.iter_repos())
+
+
+def _status_error(status: int, **response_args: object) -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", f"{FORGEJO_URL}/api/v1/user/repos?limit=50")
+    response = httpx.Response(status, request=request, **response_args)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(httpx.HTTPStatusError) as caught:
+        response.raise_for_status()
+    return caught.value
+
+
+def test_describe_http_error_quotes_the_forge() -> None:
+    exc = _status_error(
+        403,
+        json={
+            "message": "token does not have at least one of required scope(s): "
+            "[read:repository]"
+        },
+    )
+
+    described = describe_http_error(exc)
+
+    assert described == (
+        "403 for GET https://fj.example/api/v1/user/repos: token does not have "
+        "at least one of required scope(s): [read:repository]"
+    )
+
+
+def test_describe_http_error_passes_through_a_proxy_page() -> None:
+    exc = _status_error(403, html="<html>\n  <body>Access denied</body>\n</html>")
+
+    assert describe_http_error(exc).endswith(
+        ": <html> <body>Access denied</body> </html>"
+    )
+
+
+def test_describe_http_error_without_a_body_still_names_the_request() -> None:
+    exc = _status_error(500)
+
+    assert describe_http_error(exc) == (
+        "500 for GET https://fj.example/api/v1/user/repos"
+    )
 
 
 def _gitlab_item(path: str) -> dict[str, object]:
