@@ -56,6 +56,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also mirror archived repositories",
     )
     parser.add_argument(
+        "--prune",
+        action="store_true",
+        help="Delete mirrors whose repository is gone from the forge; "
+        "without it they are only reported",
+    )
+    parser.add_argument(
+        "--prune-limit",
+        type=int,
+        default=10,
+        metavar="N",
+        help="Cancel the whole prune, deleting nothing, when more than N mirrors "
+        "would go (default: 10, 0 turns the check off)",
+    )
+    parser.add_argument(
         "-j",
         "--jobs",
         type=int,
@@ -78,8 +92,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point. Returns 0 if all repositories were mirrored successfully,
-    otherwise the number of failures (capped at 125)."""
+    """Entry point. Returns 0 if all repositories were mirrored successfully and
+    no stale mirror was left behind, otherwise the number of failures (capped at
+    125)."""
     args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -99,4 +114,4 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("%s API error: %s", config.provider, exc)
         return 1
 
-    return min(result.failed, 125)
+    return min(result.failed + result.unremoved, 125)

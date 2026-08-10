@@ -8,6 +8,7 @@ and **GitHub**. Ideal for periodic backups, e.g. via cron.
 - Updates existing mirrors with `git remote update --prune`.
 - Mirrors are stored under `<target-dir>/<namespace>/<repo>.git`.
 - Archived repositories are skipped by default.
+- Mirrors whose repository is gone from the forge are reported, and deleted on request (`--prune`).
 - Multiple repositories are processed in parallel (`--jobs`).
 
 ## Installation
@@ -74,6 +75,44 @@ The token needs read access to repository contents: a classic PAT with the
 token can see; with `--owner` only that user's or organization's repositories
 are mirrored.
 
+### Stale mirrors
+
+When a repository is moved to a different group, its mirror stays behind at the
+old path and the repository is cloned again under the new one. Every run
+therefore lists the mirrors that no longer have a repository on the forge:
+
+```
+WARNING 2 mirror(s) have no repository on the forge, pass --prune to delete them:
+WARNING   /srv/backup/old-group/tools.git
+WARNING   /srv/backup/retired/prototype.git
+```
+
+Deleting them is opt-in, since a mirror is usually the last copy of a repository:
+
+```sh
+uv run forge-mirror --url https://gitlab.example.local -d /srv/backup --prune
+```
+
+`--prune` deletes the listed mirrors and the namespace directories they leave
+empty. Deletion never happens when it cannot be justified by a complete listing:
+
+- An API error aborts the run before anything is deleted — the listing is read
+  in full before the first mirror is touched, so a connection lost halfway
+  through pagination can never be mistaken for deleted repositories.
+- An empty listing (typically a token that lost its access) deletes nothing.
+- Archived repositories are kept, whether or not `--include-archived` is set.
+- More candidates than `--prune-limit` (default 10) cancels the deletion
+  completely — nothing is removed and the run exits non-zero. A jump like that
+  is usually a token that lost access to a group rather than a group that was
+  really deleted. Check the listed paths, then raise the limit for that run;
+  `0` turns the check off.
+- Only directories that are actually bare repositories are removed. Symlinks
+  and the `.git` directory of a working copy are left alone.
+
+Give each forge its own `--target-dir`: mirrors of a *different* forge below the
+same directory have no counterpart in the listing and count as stale. With
+`--owner`, only that owner's subdirectory is examined.
+
 ### Common options
 
 ```sh
@@ -88,7 +127,8 @@ Further options: `--timeout` (HTTP timeout in seconds, default 30),
 `-v/--verbose` for DEBUG logging, `--help` for the full overview.
 
 The exit code is `0` if all repositories were mirrored successfully, otherwise
-the number of failed repositories (configuration and API errors return `1`).
+the number of repositories that failed to mirror or that `--prune` was unable to
+clean up (configuration and API errors return `1`).
 
 ## Development
 

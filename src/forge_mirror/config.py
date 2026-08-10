@@ -27,6 +27,8 @@ class Config:
     owner: str | None
     use_ssh: bool
     include_archived: bool
+    prune: bool
+    prune_limit: int
     jobs: int
     timeout: float
 
@@ -77,6 +79,9 @@ def build_config(args: argparse.Namespace) -> Config:
     if args.jobs < 1:
         raise ValueError("--jobs must be at least 1")
 
+    if args.prune_limit < 0:
+        raise ValueError("--prune-limit must be 0 (no limit) or a positive number")
+
     return Config(
         provider=provider,
         base_url=base_url.rstrip("/"),
@@ -85,6 +90,8 @@ def build_config(args: argparse.Namespace) -> Config:
         owner=args.owner,
         use_ssh=args.ssh,
         include_archived=args.include_archived,
+        prune=args.prune,
+        prune_limit=args.prune_limit,
         jobs=args.jobs,
         timeout=args.timeout,
     )

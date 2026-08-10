@@ -1,8 +1,9 @@
-"""Clone repositories as bare mirrors and update them."""
+"""Clone repositories as bare mirrors, update them and drop stale ones."""
 
 import logging
+import shutil
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,19 +67,157 @@ def mirror_repo(repo: Repo, clone_url: str, target_dir: Path) -> bool:
     return True
 
 
+def iter_local_mirrors(root: Path) -> Iterator[Path]:
+    """Yield every bare mirror below root.
+
+    A mirror is a directory whose name ends in ".git"; it is never descended
+    into, so paths inside a repository cannot be mistaken for mirrors. Symlinks
+    are ignored because they may lead outside the mirror directory.
+    """
+    if not root.is_dir():
+        return
+    pending = [root]
+    while pending:
+        current = pending.pop()
+        try:
+            entries = sorted(current.iterdir())
+        except OSError as exc:
+            logger.warning("Cannot inspect %s for stale mirrors: %s", current, exc)
+            continue
+        for entry in entries:
+            if entry.is_symlink() or not entry.is_dir():
+                continue
+            if entry.name == ".git":
+                # The repository of a working copy, not one of our mirrors.
+                continue
+            if entry.name.endswith(".git"):
+                yield entry
+            elif not entry.name.startswith("."):
+                # Namespaces never start with a dot, so skipping those keeps
+                # snapshot directories (.zfs, .snapshots) out of the way.
+                pending.append(entry)
+
+
+def find_stale_mirrors(
+    target_dir: Path,
+    repos: Iterable[Repo],
+    *,
+    scope: str | None = None,
+) -> list[Path]:
+    """Local mirrors that no longer have a repository in the remote listing.
+
+    The keep set covers every listed repository, archived ones included, so
+    that archiving a repository never turns its mirror into a candidate for
+    deletion. With a scope only that subdirectory of target_dir is examined.
+    """
+    keep = {repo_path(target_dir, repo) for repo in repos}
+    root = target_dir / scope if scope else target_dir
+    return sorted(path for path in iter_local_mirrors(root) if path not in keep)
+
+
+def _is_bare_repo(path: Path) -> bool:
+    """Whether path looks like a bare git repository."""
+    return (path / "HEAD").is_file() and (path / "objects").is_dir()
+
+
+def _remove_empty_parents(start: Path, stop: Path) -> None:
+    """Remove the namespace directories a deleted mirror left empty."""
+    current = start
+    while current != stop and stop in current.parents:
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
+
+
+def remove_mirror(path: Path, target_dir: Path) -> bool:
+    """Delete a stale mirror and the namespace directories it empties.
+
+    Returns True on success, False if the directory was kept.
+    """
+    if not _is_bare_repo(path):
+        logger.error("Keeping %s: not a bare repository, delete it by hand", path)
+        return False
+    logger.info("Removing %s", path)
+    try:
+        shutil.rmtree(path)
+    except OSError as exc:
+        logger.error("Could not remove %s: %s", path, exc)
+        return False
+    _remove_empty_parents(path.parent, target_dir)
+    return True
+
+
+def _log_paths(level: int, paths: Iterable[Path]) -> None:
+    for path in paths:
+        logger.log(level, "  %s", path)
+
+
+def handle_stale_mirrors(repos: list[Repo], config: Config) -> tuple[int, int, int]:
+    """Report the mirrors without a remote repository, and with --prune drop them.
+
+    Returns (found, removed, errors).
+    """
+    if not repos:
+        logger.warning(
+            "Not looking for stale mirrors: the forge listed no repositories at all, "
+            "which points at the token rather than at an empty forge"
+        )
+        return 0, 0, 0
+
+    stale = find_stale_mirrors(config.target_dir, repos, scope=config.owner)
+    if not stale:
+        return 0, 0, 0
+
+    if not config.prune:
+        logger.warning(
+            "%d mirror(s) have no repository on the forge, pass --prune to delete them:",
+            len(stale),
+        )
+        _log_paths(logging.WARNING, stale)
+        return len(stale), 0, 0
+
+    if config.prune_limit and len(stale) > config.prune_limit:
+        logger.error(
+            "Deleting nothing: %d mirrors would go, over --prune-limit=%d. Such a jump "
+            "is usually a token that lost access, not repositories that are gone. "
+            "Check this list, then raise --prune-limit (0 turns the check off):",
+            len(stale),
+            config.prune_limit,
+        )
+        _log_paths(logging.ERROR, stale)
+        return len(stale), 0, len(stale)
+
+    removed = sum(remove_mirror(path, config.target_dir) for path in stale)
+    return len(stale), removed, len(stale) - removed
+
+
 @dataclass
 class SyncResult:
-    """Result of a complete mirror run."""
+    """Result of a complete mirror run.
+
+    stale counts the mirrors without a repository on the forge, removed those
+    of them that --prune deleted, and unremoved those it was asked to delete
+    but could not -- a run is only clean when both failed and unremoved are 0.
+    """
 
     succeeded: int
     failed: int
+    stale: int = 0
+    removed: int = 0
+    unremoved: int = 0
 
 
 def sync_all(provider: RepoSource, config: Config) -> SyncResult:
-    """Mirror all (non-archived) repositories in parallel."""
-    repos = [
-        r for r in provider.iter_repos() if config.include_archived or not r.archived
-    ]
+    """Mirror all (non-archived) repositories in parallel, then handle stale ones.
+
+    The listing is read completely before anything else happens: a forge that
+    fails halfway through pagination has to abort the run, because a partial
+    list would make pruning read the missing repositories as deleted.
+    """
+    listed = list(provider.iter_repos())
+    repos = [r for r in listed if config.include_archived or not r.archived]
     logger.info("Mirroring %d repositories (jobs=%d)", len(repos), config.jobs)
 
     def work(repo: Repo) -> bool:
@@ -90,5 +229,20 @@ def sync_all(provider: RepoSource, config: Config) -> SyncResult:
 
     succeeded = sum(results)
     failed = len(results) - succeeded
+    stale, removed, unremoved = handle_stale_mirrors(listed, config)
+
     logger.info("Done: %d succeeded, %d failed", succeeded, failed)
-    return SyncResult(succeeded=succeeded, failed=failed)
+    if stale:
+        logger.info(
+            "Stale mirrors: %d (%d removed, %d kept)",
+            stale,
+            removed,
+            stale - removed,
+        )
+    return SyncResult(
+        succeeded=succeeded,
+        failed=failed,
+        stale=stale,
+        removed=removed,
+        unremoved=unremoved,
+    )

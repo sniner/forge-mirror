@@ -3,6 +3,24 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com).
 
+## [0.3.0] - 2026-08-10
+
+### Added
+
+- **`--prune`** deletes mirrors whose repository no longer exists on the forge, together with the
+  namespace directories they leave empty — the case where a repository was moved to another group
+  and its mirror stayed behind at the old path
+- **`--prune-limit`** cancels the deletion completely when more candidates than the limit turn up
+  (default 10, `0` turns the check off); such a jump is usually a token that lost access to a group
+  rather than repositories that are really gone
+
+### Changed
+
+- **Stale mirrors** are listed at the end of every run, so a plain run shows what `--prune` would
+  delete; deletion only ever happens with `--prune`, never on an API error or an empty listing, and
+  archived repositories are kept regardless of `--include-archived`
+- **Exit code** now also counts stale mirrors that `--prune` was asked to remove but could not
+
 ## [0.2.1] - 2026-06-01
 
 ### Fixed

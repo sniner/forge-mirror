@@ -2,11 +2,20 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import final
 
+import httpx
 import pytest
 
 import forge_mirror.mirror as mirror_mod
 from forge_mirror.config import Config
-from forge_mirror.mirror import mask_token, repo_path, sync_all
+from forge_mirror.mirror import (
+    SyncResult,
+    find_stale_mirrors,
+    iter_local_mirrors,
+    mask_token,
+    remove_mirror,
+    repo_path,
+    sync_all,
+)
 from forge_mirror.providers.base import Repo
 
 
@@ -21,21 +30,35 @@ def make_repo(full_name: str = "group/repo", archived: bool = False) -> Repo:
 
 def make_config(
     *,
+    target_dir: Path = Path("/backup"),
+    owner: str | None = None,
     use_ssh: bool = False,
     include_archived: bool = False,
+    prune: bool = False,
+    prune_limit: int = 10,
     jobs: int = 2,
 ) -> Config:
     return Config(
         provider="gitlab",
         base_url="https://example",
         token="secret",
-        target_dir=Path("/backup"),
-        owner=None,
+        target_dir=target_dir,
+        owner=owner,
         use_ssh=use_ssh,
         include_archived=include_archived,
+        prune=prune,
+        prune_limit=prune_limit,
         jobs=jobs,
         timeout=30.0,
     )
+
+
+def make_mirror(target_dir: Path, full_name: str) -> Path:
+    """Create a directory that passes for a bare mirror of full_name."""
+    path = target_dir / f"{full_name}.git"
+    (path / "objects").mkdir(parents=True)
+    (path / "HEAD").write_text("ref: refs/heads/main\n")
+    return path
 
 
 def test_repo_path() -> None:
@@ -62,6 +85,18 @@ class _FakeProvider:
 
     def clone_url(self, repo: Repo, *, use_ssh: bool) -> str:
         return repo.ssh_url if use_ssh else repo.https_url
+
+
+@final
+class _BrokenProvider:
+    """A forge that hands out one page and then loses the connection."""
+
+    def iter_repos(self) -> Iterator[Repo]:
+        yield make_repo("g/a")
+        raise httpx.ReadTimeout("page 2 timed out")
+
+    def clone_url(self, repo: Repo, *, use_ssh: bool) -> str:
+        return repo.https_url
 
 
 def _record(seen: list[str]):
@@ -94,3 +129,225 @@ def test_sync_all_includes_archived_when_requested(
     _ = sync_all(provider, make_config(include_archived=True))
 
     assert set(seen) == {"g/active", "g/old"}
+
+
+def test_iter_local_mirrors_finds_nested_namespaces(tmp_path: Path) -> None:
+    expected = {
+        make_mirror(tmp_path, "group/repo"),
+        make_mirror(tmp_path, "group/sub/deep"),
+        make_mirror(tmp_path, "toplevel"),
+    }
+    assert set(iter_local_mirrors(tmp_path)) == expected
+
+
+def test_iter_local_mirrors_does_not_descend_into_a_mirror(tmp_path: Path) -> None:
+    mirror = make_mirror(tmp_path, "group/repo")
+    (mirror / "modules" / "nested.git").mkdir(parents=True)
+
+    assert list(iter_local_mirrors(tmp_path)) == [mirror]
+
+
+def test_iter_local_mirrors_ignores_working_copies_and_dot_dirs(tmp_path: Path) -> None:
+    (tmp_path / "checkout" / ".git" / "objects").mkdir(parents=True)
+    (tmp_path / ".snapshots" / "group" / "repo.git" / "objects").mkdir(parents=True)
+    mirror = make_mirror(tmp_path, "group/repo")
+
+    assert list(iter_local_mirrors(tmp_path)) == [mirror]
+
+
+def test_iter_local_mirrors_ignores_symlinks(tmp_path: Path) -> None:
+    mirror = make_mirror(tmp_path, "group/repo")
+    (tmp_path / "link.git").symlink_to(mirror, target_is_directory=True)
+
+    assert list(iter_local_mirrors(tmp_path)) == [mirror]
+
+
+def test_iter_local_mirrors_on_missing_directory(tmp_path: Path) -> None:
+    assert list(iter_local_mirrors(tmp_path / "nope")) == []
+
+
+def test_find_stale_mirrors_reports_the_old_location(tmp_path: Path) -> None:
+    _ = make_mirror(tmp_path, "new-group/repo")
+    old = make_mirror(tmp_path, "old-group/repo")
+
+    stale = find_stale_mirrors(tmp_path, [make_repo("new-group/repo")])
+
+    assert stale == [old]
+
+
+def test_find_stale_mirrors_keeps_archived_repositories(tmp_path: Path) -> None:
+    _ = make_mirror(tmp_path, "g/old")
+
+    stale = find_stale_mirrors(tmp_path, [make_repo("g/old", archived=True)])
+
+    assert stale == []
+
+
+def test_find_stale_mirrors_honours_the_scope(tmp_path: Path) -> None:
+    gone = make_mirror(tmp_path, "my-org/gone")
+    _ = make_mirror(tmp_path, "other-org/untouched")
+
+    stale = find_stale_mirrors(tmp_path, [make_repo("my-org/kept")], scope="my-org")
+
+    assert stale == [gone]
+
+
+def test_remove_mirror_deletes_the_emptied_namespace(tmp_path: Path) -> None:
+    mirror = make_mirror(tmp_path, "group/sub/repo")
+
+    assert remove_mirror(mirror, tmp_path) is True
+    assert not (tmp_path / "group").exists()
+    assert tmp_path.exists()
+
+
+def test_remove_mirror_keeps_a_namespace_still_in_use(tmp_path: Path) -> None:
+    mirror = make_mirror(tmp_path, "group/repo")
+    sibling = make_mirror(tmp_path, "group/other")
+
+    assert remove_mirror(mirror, tmp_path) is True
+    assert sibling.exists()
+
+
+def test_remove_mirror_refuses_anything_but_a_bare_repo(tmp_path: Path) -> None:
+    stray = tmp_path / "notes.git"
+    stray.mkdir()
+
+    assert remove_mirror(stray, tmp_path) is False
+    assert stray.exists()
+
+
+def _sync_with_mirrors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    local: list[str],
+    remote: list[str],
+    prune: bool = False,
+    prune_limit: int = 10,
+) -> SyncResult:
+    """Run sync_all over prepared local mirrors, without touching git."""
+    monkeypatch.setattr(mirror_mod, "mirror_repo", _record([]))
+    for full_name in local:
+        _ = make_mirror(tmp_path, full_name)
+    provider = _FakeProvider([make_repo(name) for name in remote])
+    config = make_config(target_dir=tmp_path, prune=prune, prune_limit=prune_limit)
+    return sync_all(provider, config)
+
+
+def test_sync_all_reports_stale_mirrors_without_prune(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = _sync_with_mirrors(
+        monkeypatch, tmp_path, local=["g/gone", "g/kept"], remote=["g/kept"]
+    )
+
+    assert result.stale == 1
+    assert result.removed == 0
+    assert result.unremoved == 0
+    assert (tmp_path / "g/gone.git").exists()
+
+
+def test_sync_all_removes_stale_mirrors_with_prune(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = _sync_with_mirrors(
+        monkeypatch,
+        tmp_path,
+        local=["old/repo", "new/repo"],
+        remote=["new/repo"],
+        prune=True,
+    )
+
+    assert result.stale == 1
+    assert result.removed == 1
+    assert not (tmp_path / "old").exists()
+    assert (tmp_path / "new/repo.git").exists()
+
+
+def test_sync_all_stops_at_the_prune_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = _sync_with_mirrors(
+        monkeypatch,
+        tmp_path,
+        local=["g/a", "g/b", "g/c"],
+        remote=["g/a"],
+        prune=True,
+        prune_limit=1,
+    )
+
+    assert result.stale == 2
+    assert result.removed == 0
+    assert result.unremoved == 2
+    assert (tmp_path / "g/b.git").exists()
+    assert (tmp_path / "g/c.git").exists()
+
+
+def test_sync_all_prune_limit_zero_removes_everything_stale(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = _sync_with_mirrors(
+        monkeypatch,
+        tmp_path,
+        local=["g/a", "g/b", "g/c"],
+        remote=["g/a"],
+        prune=True,
+        prune_limit=0,
+    )
+
+    assert result.removed == 2
+    assert (tmp_path / "g/a.git").exists()
+
+
+def test_sync_all_keeps_everything_when_the_listing_is_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = _sync_with_mirrors(
+        monkeypatch, tmp_path, local=["g/a", "g/b"], remote=[], prune=True
+    )
+
+    assert result.stale == 0
+    assert result.removed == 0
+    assert (tmp_path / "g/a.git").exists()
+
+
+def test_sync_all_counts_a_mirror_it_could_not_remove(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(mirror_mod, "mirror_repo", _record([]))
+    (tmp_path / "g" / "junk.git").mkdir(parents=True)
+    provider = _FakeProvider([make_repo("g/kept")])
+
+    result = sync_all(provider, make_config(target_dir=tmp_path, prune=True))
+
+    assert result.stale == 1
+    assert result.removed == 0
+    assert result.unremoved == 1
+    assert (tmp_path / "g" / "junk.git").exists()
+
+
+def test_sync_all_keeps_everything_when_the_listing_breaks_off(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(mirror_mod, "mirror_repo", _record([]))
+    _ = make_mirror(tmp_path, "g/a")
+    _ = make_mirror(tmp_path, "g/b")
+
+    with pytest.raises(httpx.ReadTimeout):
+        _ = sync_all(_BrokenProvider(), make_config(target_dir=tmp_path, prune=True))
+
+    assert (tmp_path / "g/a.git").exists()
+    assert (tmp_path / "g/b.git").exists()
+
+
+def test_sync_all_keeps_archived_repositories_when_pruning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(mirror_mod, "mirror_repo", _record([]))
+    _ = make_mirror(tmp_path, "g/archived")
+    provider = _FakeProvider([make_repo("g/archived", archived=True)])
+
+    result = sync_all(provider, make_config(target_dir=tmp_path, prune=True))
+
+    assert result.stale == 0
+    assert (tmp_path / "g/archived.git").exists()

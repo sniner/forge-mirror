@@ -15,6 +15,8 @@ def make_args(**overrides: object) -> argparse.Namespace:
         "owner": None,
         "ssh": False,
         "include_archived": False,
+        "prune": False,
+        "prune_limit": 10,
         "jobs": 4,
         "timeout": 30.0,
     }
@@ -139,3 +141,24 @@ def test_invalid_jobs_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         build_config(
             make_args(url="https://gl.example", token="t", target_dir="/d", jobs=0)
         )
+
+
+def test_negative_prune_limit_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    with pytest.raises(ValueError, match="--prune-limit"):
+        build_config(
+            make_args(
+                url="https://gl.example",
+                token="t",
+                target_dir="/d",
+                prune_limit=-1,
+            )
+        )
+
+
+def test_prune_limit_zero_is_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    config = build_config(
+        make_args(url="https://gl.example", token="t", target_dir="/d", prune_limit=0)
+    )
+    assert config.prune_limit == 0
