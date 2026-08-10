@@ -24,29 +24,38 @@ append `@<tag>`, e.g. `git+https://github.com/sniner/forge-mirror@v0.2.0`.
 
 ## Usage
 
-Select the forge with `--provider` (`gitlab`, `github` or `forgejo`, default:
-`gitlab`). Configuration is provided via CLI argument or environment variable
-(arguments take precedence):
+A run mirrors exactly one forge, and each of the four settings is given either as
+a CLI argument or as an environment variable (arguments take precedence):
 
-| Argument           | Environment variable                            | Meaning                          |
-| ------------------ | ----------------------------------------------- | -------------------------------- |
-| `--url`            | `GITLAB_URL` / `GITHUB_URL` / `FORGEJO_URL`     | Base URL of the forge API        |
-| `--token`          | `GITLAB_TOKEN` / `GITHUB_TOKEN` / `FORGEJO_TOKEN` | Access token                   |
-| `-d, --target-dir` | `FORGE_MIRROR_DIR`                              | Target directory for the mirrors |
+| Argument           | Environment variable    | Meaning                          |
+| ------------------ | ----------------------- | -------------------------------- |
+| `--provider`       | `FORGE_MIRROR_PROVIDER` | Forge to mirror from             |
+| `--url`            | `FORGE_MIRROR_URL`      | Base URL of the forge API        |
+| `--token`          | `FORGE_MIRROR_TOKEN`    | Access token                     |
+| `-d, --target-dir` | `FORGE_MIRROR_DIR`      | Target directory for the mirrors |
 
-The environment variable used for token and URL depends on the selected provider.
-For GitHub, `--url` defaults to `https://api.github.com` (set it to your GitHub
-Enterprise API endpoint, e.g. `https://ghe.example/api/v3`, when needed). A bare
+### Which forge
+
+`--provider` defaults to `auto`, which asks GitLab, GitHub and Forgejo in turn
+for a single page of repositories — each with that forge's own authentication
+scheme, on its own listing endpoint. The others are being asked for a route they
+do not serve and answer `404`, so the one that returns a list is the forge that
+is there. That makes the answer a guarantee rather than a guess: whatever
+answered can also list the repositories, so a mistyped URL or a token missing a
+scope is reported before the first clone instead of halfway through the run.
+
+Naming the forge with `--provider gitlab|github|forgejo` skips that request, and
+for GitHub it supplies the default URL `https://api.github.com`. The other two
+are self-hosted and have no default, so they need `--url`. A bare
 `https://github.com` is rewritten to `https://api.github.com`, since github.com
 serves its API from a separate host — unlike Enterprise, which uses `/api/v3` on
-the web host.
+the web host and is given in full as `https://ghe.example/api/v3`.
 
 ### GitLab
 
 ```sh
-export GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
+export FORGE_MIRROR_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
 uv run forge-mirror \
-    --provider gitlab \
     --url https://gitlab.example.local \
     --target-dir /srv/backup/gitlab \
     --jobs 4
@@ -62,8 +71,9 @@ project on the platform.
 ### GitHub
 
 ```sh
-export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
-# All repositories visible to the token (owner, collaborator, org member)
+export FORGE_MIRROR_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
+# All repositories visible to the token (owner, collaborator, org member).
+# --provider github is what supplies the default URL https://api.github.com
 uv run forge-mirror --provider github -d /srv/backup/github
 
 # Restrict to a single user or organization
@@ -79,9 +89,8 @@ are mirrored.
 ### Forgejo
 
 ```sh
-export FORGEJO_TOKEN=xxxxxxxxxxxxxxxxxxxx
+export FORGE_MIRROR_TOKEN=xxxxxxxxxxxxxxxxxxxx
 uv run forge-mirror \
-    --provider forgejo \
     --url https://forgejo.example.local \
     --target-dir /srv/backup/forgejo
 ```

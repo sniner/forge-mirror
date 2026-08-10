@@ -8,7 +8,7 @@ import httpx
 from forge_mirror import __version__
 from forge_mirror.config import build_config
 from forge_mirror.mirror import sync_all
-from forge_mirror.providers import PROVIDERS, create_provider
+from forge_mirror.providers import PROVIDER_CHOICES, create_provider
 from forge_mirror.providers.base import describe_http_error
 
 logger = logging.getLogger("forge_mirror")
@@ -23,19 +23,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument(
         "--provider",
-        choices=PROVIDERS,
-        default="gitlab",
-        help="Forge to mirror from (default: gitlab)",
+        choices=PROVIDER_CHOICES,
+        default=None,
+        help="Forge to mirror from (env: FORGE_MIRROR_PROVIDER; default: auto, "
+        "which asks the forge at --url which one it is)",
     )
     parser.add_argument(
         "--url",
-        help="Base URL of the forge API (env: GITLAB_URL/GITHUB_URL/FORGEJO_URL; "
-        "GitHub defaults to https://api.github.com)",
+        help="Base URL of the forge API (env: FORGE_MIRROR_URL; with "
+        "--provider github it defaults to https://api.github.com)",
     )
     parser.add_argument(
         "--token",
-        help="Personal/project access token "
-        "(env: GITLAB_TOKEN/GITHUB_TOKEN/FORGEJO_TOKEN)",
+        help="Personal/project access token (env: FORGE_MIRROR_TOKEN)",
     )
     parser.add_argument(
         "-d",
@@ -102,6 +102,11 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
+    # httpx logs every request at INFO. Autodetection asks forges that are not
+    # there, so those lines would report a routine 404 as if something broke.
+    logging.getLogger("httpx").setLevel(
+        logging.DEBUG if args.verbose else logging.WARNING
+    )
 
     try:
         config = build_config(args)
@@ -109,14 +114,25 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("%s", exc)
         return 1
 
+    # Resolving the provider is its own step: until it is done there is no forge
+    # to name in an error message, and autodetection reports in its own words.
     try:
-        with create_provider(config) as provider:
-            result = sync_all(provider, config)
-    except httpx.HTTPStatusError as exc:
-        logger.error("%s API error: %s", config.provider, describe_http_error(exc))
+        provider = create_provider(config)
+    except ValueError as exc:
+        logger.error("%s", exc)
         return 1
     except httpx.HTTPError as exc:
-        logger.error("%s API error: %s", config.provider, exc)
+        logger.error("Cannot reach %s: %s", config.base_url, exc)
+        return 1
+
+    try:
+        with provider:
+            result = sync_all(provider, config)
+    except httpx.HTTPStatusError as exc:
+        logger.error("%s API error: %s", provider.name, describe_http_error(exc))
+        return 1
+    except httpx.HTTPError as exc:
+        logger.error("%s API error: %s", provider.name, exc)
         return 1
 
     return min(result.failed + result.unremoved, 125)

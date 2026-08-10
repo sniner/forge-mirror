@@ -154,6 +154,30 @@ def test_github_owner_user_uses_users_endpoint() -> None:
     assert names == ["alice/dotfiles"]
 
 
+@pytest.mark.parametrize(
+    "given",
+    [
+        "https://github.com",
+        "https://github.com/",
+        "https://www.github.com",
+        "http://github.com",
+    ],
+)
+def test_github_web_host_is_rewritten_to_the_api_host(given: str) -> None:
+    assert GitHubProvider.normalize_url(given).endswith("api.github.com")
+
+
+def test_github_enterprise_url_is_left_untouched() -> None:
+    given = "https://ghe.example/api/v3"
+    assert GitHubProvider.normalize_url(given) == given
+
+
+def test_other_forges_talk_to_the_url_as_given() -> None:
+    given = "https://gl.example"
+    assert GitLabProvider.normalize_url(given) == given
+    assert ForgejoProvider.normalize_url(given) == given
+
+
 def test_forgejo_clone_url_embeds_token() -> None:
     provider = ForgejoProvider(FORGEJO_URL, "secret", 10.0)
     url = provider.clone_url(make_repo(), use_ssh=False)
@@ -203,9 +227,11 @@ def test_raises_on_http_error() -> None:
     respx.get(f"{GITLAB_URL}/api/v4/projects").mock(
         return_value=httpx.Response(401, json={"message": "unauthorized"})
     )
-    with GitLabProvider(GITLAB_URL, "bad", 10.0) as provider:
-        with pytest.raises(httpx.HTTPStatusError):
-            list(provider.iter_repos())
+    with (
+        GitLabProvider(GITLAB_URL, "bad", 10.0) as provider,
+        pytest.raises(httpx.HTTPStatusError),
+    ):
+        list(provider.iter_repos())
 
 
 def _status_error(status: int, **response_args: object) -> httpx.HTTPStatusError:

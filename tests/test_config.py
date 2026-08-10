@@ -5,10 +5,17 @@ import pytest
 
 from forge_mirror.config import build_config
 
+ENV_VARS = (
+    "FORGE_MIRROR_PROVIDER",
+    "FORGE_MIRROR_URL",
+    "FORGE_MIRROR_TOKEN",
+    "FORGE_MIRROR_DIR",
+)
+
 
 def make_args(**overrides: object) -> argparse.Namespace:
     defaults: dict[str, object] = {
-        "provider": "gitlab",
+        "provider": None,
         "url": None,
         "token": None,
         "target_dir": None,
@@ -24,166 +31,92 @@ def make_args(**overrides: object) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
+@pytest.fixture(autouse=True)
 def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in (
-        "GITLAB_URL",
-        "GITHUB_URL",
-        "FORGEJO_URL",
-        "GITLAB_TOKEN",
-        "GITHUB_TOKEN",
-        "FORGEJO_TOKEN",
-    ):
+    for var in ENV_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.delenv("FORGE_MIRROR_DIR", raising=False)
 
 
 def test_args_take_precedence_over_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GITLAB_URL", "https://env.example")
-    monkeypatch.setenv("GITLAB_TOKEN", "env-token")
+    monkeypatch.setenv("FORGE_MIRROR_PROVIDER", "forgejo")
+    monkeypatch.setenv("FORGE_MIRROR_URL", "https://env.example")
+    monkeypatch.setenv("FORGE_MIRROR_TOKEN", "env-token")
     monkeypatch.setenv("FORGE_MIRROR_DIR", "/env/dir")
 
     config = build_config(
-        make_args(url="https://arg.example", token="arg-token", target_dir="/arg/dir")
+        make_args(
+            provider="gitlab",
+            url="https://arg.example",
+            token="arg-token",
+            target_dir="/arg/dir",
+        )
     )
 
+    assert config.provider == "gitlab"
     assert config.base_url == "https://arg.example"
     assert config.token == "arg-token"
     assert config.target_dir == Path("/arg/dir")
 
 
-def test_falls_back_to_provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
-    monkeypatch.setenv("GITLAB_URL", "https://env.example")
-    monkeypatch.setenv("GITLAB_TOKEN", "env-token")
+def test_falls_back_to_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FORGE_MIRROR_PROVIDER", "forgejo")
+    monkeypatch.setenv("FORGE_MIRROR_URL", "https://env.example")
+    monkeypatch.setenv("FORGE_MIRROR_TOKEN", "env-token")
     monkeypatch.setenv("FORGE_MIRROR_DIR", "/env/dir")
 
     config = build_config(make_args())
 
+    assert config.provider == "forgejo"
     assert config.base_url == "https://env.example"
     assert config.token == "env-token"
     assert config.target_dir == Path("/env/dir")
 
 
-def test_github_token_env_is_separate(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
-    monkeypatch.setenv("GITLAB_TOKEN", "gl-token")
-    monkeypatch.setenv("GITHUB_TOKEN", "gh-token")
-
-    config = build_config(make_args(provider="github", target_dir="/d"))
-
-    assert config.token == "gh-token"
+def test_provider_defaults_to_auto() -> None:
+    config = build_config(make_args(url="https://gl.example", token="t", target_dir="/d"))
+    assert config.provider == "auto"
 
 
-def test_forgejo_uses_its_own_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
-    monkeypatch.setenv("GITLAB_TOKEN", "gl-token")
-    monkeypatch.setenv("FORGEJO_TOKEN", "fj-token")
-    monkeypatch.setenv("FORGEJO_URL", "https://fj.example")
-
-    config = build_config(make_args(provider="forgejo", target_dir="/d"))
-
-    assert config.token == "fj-token"
-    assert config.base_url == "https://fj.example"
+def test_auto_requires_url() -> None:
+    with pytest.raises(ValueError, match="--url"):
+        build_config(make_args(token="t", target_dir="/d"))
 
 
-def test_forgejo_requires_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
+def test_forgejo_requires_url() -> None:
     with pytest.raises(ValueError, match="--url"):
         build_config(make_args(provider="forgejo", token="t", target_dir="/d"))
 
 
-def test_owner_is_rejected_for_forgejo(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
-    with pytest.raises(ValueError, match="--owner"):
-        build_config(
-            make_args(
-                provider="forgejo",
-                url="https://fj.example",
-                token="t",
-                target_dir="/d",
-                owner="x",
-            )
-        )
-
-
-def test_github_defaults_to_public_api(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
+def test_github_defaults_to_public_api() -> None:
     config = build_config(make_args(provider="github", token="t", target_dir="/d"))
     assert config.base_url == "https://api.github.com"
 
 
-@pytest.mark.parametrize(
-    "given",
-    [
-        "https://github.com",
-        "https://github.com/",
-        "https://www.github.com",
-        "http://github.com",
-    ],
-)
-def test_github_web_host_is_rewritten_to_api(
-    monkeypatch: pytest.MonkeyPatch, given: str
-) -> None:
-    _clear_env(monkeypatch)
-    config = build_config(
-        make_args(provider="github", url=given, token="t", target_dir="/d")
-    )
-    assert config.base_url.endswith("api.github.com")
-
-
-def test_github_enterprise_url_is_left_untouched(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _clear_env(monkeypatch)
-    config = build_config(
-        make_args(
-            provider="github",
-            url="https://ghe.example/api/v3",
-            token="t",
-            target_dir="/d",
-        )
-    )
-    assert config.base_url == "https://ghe.example/api/v3"
-
-
-def test_url_is_normalised(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
+def test_url_is_normalised() -> None:
     config = build_config(
         make_args(url="https://gl.example/", token="t", target_dir="/d")
     )
     assert config.base_url == "https://gl.example"
 
 
-def test_missing_required_values_raise(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
-    with pytest.raises(ValueError, match="Missing required options"):
+def test_missing_required_values_name_their_env_variable() -> None:
+    with pytest.raises(ValueError, match="Missing required options") as caught:
         build_config(make_args())
 
-
-def test_gitlab_requires_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
-    with pytest.raises(ValueError, match="--url"):
-        build_config(make_args(token="t", target_dir="/d"))
-
-
-def test_owner_only_allowed_for_github(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
-    with pytest.raises(ValueError, match="--owner"):
-        build_config(
-            make_args(url="https://gl.example", token="t", target_dir="/d", owner="x")
-        )
+    message = str(caught.value)
+    assert "--token (FORGE_MIRROR_TOKEN)" in message
+    assert "--url (FORGE_MIRROR_URL)" in message
+    assert "--target-dir (FORGE_MIRROR_DIR)" in message
 
 
-def test_invalid_jobs_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
+def test_invalid_jobs_raises() -> None:
     with pytest.raises(ValueError, match="--jobs"):
         build_config(
             make_args(url="https://gl.example", token="t", target_dir="/d", jobs=0)
         )
 
 
-def test_negative_prune_limit_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
+def test_negative_prune_limit_raises() -> None:
     with pytest.raises(ValueError, match="--prune-limit"):
         build_config(
             make_args(
@@ -195,8 +128,7 @@ def test_negative_prune_limit_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
 
-def test_prune_limit_zero_is_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
+def test_prune_limit_zero_is_allowed() -> None:
     config = build_config(
         make_args(url="https://gl.example", token="t", target_dir="/d", prune_limit=0)
     )

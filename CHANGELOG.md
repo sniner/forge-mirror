@@ -3,6 +3,34 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com).
 
+## [0.5.0] - 2026-08-10
+
+### Breaking changes
+
+- **Environment variables** are no longer one set per forge: `FORGE_MIRROR_URL` and
+  `FORGE_MIRROR_TOKEN` replace `GITLAB_URL`/`GITHUB_URL`/`FORGEJO_URL` and
+  `GITLAB_TOKEN`/`GITHUB_TOKEN`/`FORGEJO_TOKEN`, which are no longer read — rename them in the cron
+  jobs and unit files that call the tool. A run mirrors one forge, so one URL and one token were
+  always all it needed. `FORGE_MIRROR_DIR` is unchanged
+
+### Added
+
+- **Autodetection** of the forge: `--provider` now defaults to `auto`, which asks GitLab, GitHub
+  and Forgejo in turn for one page of repositories, each with its own authentication scheme and its
+  own listing endpoint. The forge that answers is the one that will work, so a wrong URL or a token
+  without the necessary scopes is reported before the first clone instead of surfacing later as a
+  bare `404`
+- **`FORGE_MIRROR_PROVIDER`** names the forge from the environment; `--provider auto` overrides it
+  back to autodetection for a single run
+
+### Changed
+
+- **`--provider`** defaults to `auto` instead of `gitlab`; name the forge explicitly to skip the
+  detection request
+- **Missing options** are reported with the environment variable that would have supplied them
+- **Request logging** by the HTTP library has moved behind `-v`, so a normal run reports what it is
+  doing rather than one line per API request
+
 ## [0.4.1] - 2026-08-10
 
 ### Fixed
