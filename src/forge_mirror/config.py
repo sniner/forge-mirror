@@ -29,6 +29,7 @@ class Config:
     target_dir: Path | None
     owner: str | None
     list_only: bool
+    dry_run: bool
     use_ssh: bool
     include_archived: bool
     prune: bool
@@ -67,6 +68,12 @@ def build_config(args: argparse.Namespace) -> Config:
             "-- drop one of the two"
         )
 
+    if args.list and args.dry_run:
+        raise ValueError(
+            "--list names what the forge has, --dry-run what a run would do "
+            "with it -- pick the question you want answered"
+        )
+
     if args.jobs < 1:
         raise ValueError("--jobs must be at least 1")
 
@@ -80,6 +87,7 @@ def build_config(args: argparse.Namespace) -> Config:
         target_dir=Path(target_dir).expanduser() if target_dir else None,
         owner=args.owner,
         list_only=args.list,
+        dry_run=args.dry_run,
         use_ssh=args.ssh,
         include_archived=args.include_archived,
         prune=args.prune,

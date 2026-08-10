@@ -24,6 +24,7 @@ _BASE = Config(
     target_dir=Path("/d"),
     owner=None,
     list_only=False,
+    dry_run=False,
     use_ssh=False,
     include_archived=False,
     prune=False,

@@ -21,6 +21,7 @@ def make_args(**overrides: object) -> argparse.Namespace:
         "target_dir": None,
         "owner": None,
         "list": False,
+        "dry_run": False,
         "ssh": False,
         "include_archived": False,
         "prune": False,
@@ -127,6 +128,29 @@ def test_list_and_prune_together_are_refused() -> None:
         build_config(
             make_args(list=True, prune=True, url="https://gl.example", token="t")
         )
+
+
+def test_list_and_dry_run_together_are_refused() -> None:
+    with pytest.raises(ValueError, match="pick the question"):
+        build_config(
+            make_args(list=True, dry_run=True, url="https://gl.example", token="t")
+        )
+
+
+def test_dry_run_still_needs_a_target_directory() -> None:
+    with pytest.raises(ValueError, match="--target-dir"):
+        build_config(make_args(dry_run=True, url="https://gl.example", token="t"))
+
+
+def test_dry_run_and_prune_are_a_valid_pair() -> None:
+    config = build_config(
+        make_args(
+            dry_run=True, prune=True, url="https://gl.example", token="t", target_dir="/d"
+        )
+    )
+
+    assert config.dry_run is True
+    assert config.prune is True
 
 
 def test_invalid_jobs_raises() -> None:

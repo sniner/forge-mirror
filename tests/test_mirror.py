@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
@@ -10,6 +11,7 @@ import forge_mirror.mirror as mirror_mod
 from forge_mirror.config import Config
 from forge_mirror.mirror import (
     SyncResult,
+    dry_run,
     find_stale_mirrors,
     iter_local_mirrors,
     list_repos,
@@ -47,6 +49,7 @@ def make_config(
         target_dir=target_dir,
         owner=owner,
         list_only=False,
+        dry_run=False,
         use_ssh=use_ssh,
         include_archived=include_archived,
         prune=prune,
@@ -398,3 +401,68 @@ def test_list_repos_needs_no_target_directory(
 
     assert list_repos(provider, config) == 1
     assert capsys.readouterr().out == "g/one\n"
+
+
+def _explode(*args: object, **kwargs: object) -> bool:
+    raise AssertionError("a dry run must not touch anything")
+
+
+def test_dry_run_neither_mirrors_nor_deletes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(mirror_mod, "mirror_repo", _explode)
+    monkeypatch.setattr(mirror_mod, "remove_mirror", _explode)
+    kept = make_mirror(tmp_path, "g/kept")
+    stale = make_mirror(tmp_path, "g/gone")
+    provider = _FakeProvider([make_repo("g/kept"), make_repo("g/new")])
+
+    with caplog.at_level(logging.INFO):
+        dry_run(provider, make_config(target_dir=tmp_path, prune=True))
+
+    assert kept.exists()
+    assert stale.exists()
+    assert "2 repositories: 1 to clone, 1 to update" in caplog.text
+    assert "Would clone g/new" in caplog.text
+    assert "--prune would delete 1 mirror(s)" in caplog.text
+    assert str(stale) in caplog.text
+
+
+def test_dry_run_without_prune_says_how_to_carry_it_out(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(mirror_mod, "remove_mirror", _explode)
+    _ = make_mirror(tmp_path, "g/gone")
+    provider = _FakeProvider([make_repo("g/new")])
+
+    with caplog.at_level(logging.INFO):
+        dry_run(provider, make_config(target_dir=tmp_path))
+
+    assert "add --prune" in caplog.text
+    assert "drop --dry-run" in caplog.text
+
+
+def test_dry_run_reports_a_cancelled_prune(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(mirror_mod, "remove_mirror", _explode)
+    for name in ("g/one", "g/two", "g/three"):
+        _ = make_mirror(tmp_path, name)
+    provider = _FakeProvider([make_repo("g/still-there")])
+
+    with caplog.at_level(logging.INFO):
+        dry_run(provider, make_config(target_dir=tmp_path, prune=True, prune_limit=2))
+
+    assert "would delete nothing here" in caplog.text
+    assert "--prune-limit=2" in caplog.text
+
+
+def test_dry_run_leaves_archived_out_by_default(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    provider = _FakeProvider([make_repo("g/active"), make_repo("g/old", archived=True)])
+
+    with caplog.at_level(logging.INFO):
+        dry_run(provider, make_config(target_dir=tmp_path))
+
+    assert "1 repositories: 1 to clone, 0 to update" in caplog.text
+    assert "1 archived one(s) left out" in caplog.text

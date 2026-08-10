@@ -145,6 +145,34 @@ and that the token carries the scopes it needs, before a first run pulls
 gigabytes. `--include-archived` widens the list exactly as it widens a run;
 `--prune` is refused alongside it, since a listing has nothing to delete.
 
+`--list` answers what the forge has. What a run would *do* with it is the
+question `--dry-run` answers, and the two are refused together.
+
+### Trying a run without making it
+
+`--dry-run` reports what a run would clone, update and — together with
+`--prune` — delete, and does none of it:
+
+```sh
+uv run forge-mirror --url https://gitlab.example.local -d /srv/backup --dry-run
+```
+
+```
+INFO Dry run: nothing is cloned, updated or deleted
+INFO 71 repositories: 3 to clone, 68 to update (-v names the updates too)
+INFO Would clone group/newcomer
+WARNING 1 mirror(s) have no repository on the forge; add --prune to see them as
+WARNING   deletions, and drop --dry-run to carry them out:
+WARNING   /srv/backup/old-group/tools.git
+INFO Dry run finished, nothing was touched
+```
+
+Repositories that would only be updated are the unremarkable majority of a
+settled mirror directory, so they are counted rather than listed; `-v` names
+them as well. `--dry-run --prune` is the pairing worth having before a real
+prune: it prints exactly the mirrors that deletion would take, and says so when
+`--prune-limit` would cancel the whole thing.
+
 ### Stale mirrors
 
 When a repository is moved to a different group, its mirror stays behind at the

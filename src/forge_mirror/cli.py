@@ -7,7 +7,7 @@ import httpx
 
 from forge_mirror import __version__
 from forge_mirror.config import build_config
-from forge_mirror.mirror import list_repos, sync_all
+from forge_mirror.mirror import dry_run, list_repos, sync_all
 from forge_mirror.providers import PROVIDER_CHOICES, create_provider
 from forge_mirror.providers.base import describe_http_error
 
@@ -52,6 +52,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="List the repositories that would be mirrored, one per line, and "
         "stop there; nothing is cloned, so --target-dir is not needed",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what a run would clone, update and (with --prune) delete, "
+        "and do none of it",
     )
     parser.add_argument(
         "--ssh",
@@ -135,6 +141,9 @@ def main(argv: list[str] | None = None) -> int:
         with provider:
             if config.list_only:
                 list_repos(provider, config)
+                return 0
+            if config.dry_run:
+                dry_run(provider, config)
                 return 0
             result = sync_all(provider, config)
     except httpx.HTTPStatusError as exc:
