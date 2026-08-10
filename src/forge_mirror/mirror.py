@@ -166,7 +166,10 @@ def handle_stale_mirrors(repos: list[Repo], config: Config) -> tuple[int, int, i
         )
         return 0, 0, 0
 
-    stale = find_stale_mirrors(config.target_dir, repos, scope=config.owner)
+    target_dir = config.target_dir
+    assert target_dir is not None, "pruning needs a target directory"
+
+    stale = find_stale_mirrors(target_dir, repos, scope=config.owner)
     if not stale:
         return 0, 0, 0
 
@@ -189,8 +192,34 @@ def handle_stale_mirrors(repos: list[Repo], config: Config) -> tuple[int, int, i
         _log_paths(logging.ERROR, stale)
         return len(stale), 0, len(stale)
 
-    removed = sum(remove_mirror(path, config.target_dir) for path in stale)
+    removed = sum(remove_mirror(path, target_dir) for path in stale)
     return len(stale), removed, len(stale) - removed
+
+
+def list_repos(provider: RepoSource, config: Config) -> int:
+    """Report what a mirror run would take, and return how many that is.
+
+    The names go to standard output, one per line and nothing else, so the
+    list can be counted or filtered by another command; what the run has to
+    say about itself stays on the log, where it does not get in the way.
+    """
+    listed = list(provider.iter_repos())
+    repos = [r for r in listed if config.include_archived or not r.archived]
+    for repo in repos:
+        # Not the logger: this list is the answer, not a remark about the run.
+        print(repo.full_name)
+
+    skipped = len(listed) - len(repos)
+    if skipped:
+        logger.info(
+            "%d repositories would be mirrored, %d archived one(s) left out "
+            "(--include-archived takes them along)",
+            len(repos),
+            skipped,
+        )
+    else:
+        logger.info("%d repositories would be mirrored", len(repos))
+    return len(repos)
 
 
 @dataclass
@@ -216,13 +245,16 @@ def sync_all(provider: RepoSource, config: Config) -> SyncResult:
     fails halfway through pagination has to abort the run, because a partial
     list would make pruning read the missing repositories as deleted.
     """
+    target_dir = config.target_dir
+    assert target_dir is not None, "a mirror run needs a target directory"
+
     listed = list(provider.iter_repos())
     repos = [r for r in listed if config.include_archived or not r.archived]
     logger.info("Mirroring %d repositories (jobs=%d)", len(repos), config.jobs)
 
     def work(repo: Repo) -> bool:
         clone_url = provider.clone_url(repo, use_ssh=config.use_ssh)
-        return mirror_repo(repo, clone_url, config.target_dir)
+        return mirror_repo(repo, clone_url, target_dir)
 
     with ThreadPoolExecutor(max_workers=config.jobs) as executor:
         results = list(executor.map(work, repos))

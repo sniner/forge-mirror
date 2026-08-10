@@ -51,6 +51,9 @@ are self-hosted and have no default, so they need `--url`. A bare
 serves its API from a separate host — unlike Enterprise, which uses `/api/v3` on
 the web host and is given in full as `https://ghe.example/api/v3`.
 
+To see what autodetection makes of a URL without mirroring anything, add
+`--list` (below).
+
 ### GitLab
 
 ```sh
@@ -120,6 +123,27 @@ repositories of *other* users on the instance are not pulled in.
 
 `--owner` is not available for Forgejo. The same API also serves **Gitea**,
 which this provider has not been tested against.
+
+### Listing without mirroring
+
+`--list` prints the repositories a run would take, one per line, and stops
+there. Nothing is cloned, so `--target-dir` is not needed:
+
+```sh
+uv run forge-mirror --url https://gitlab.example.local --list
+```
+
+The names go to standard output and everything the run has to say about itself
+to the log, so the list can be counted or filtered:
+
+```sh
+forge-mirror --url https://gitlab.example.local --list | wc -l
+```
+
+This is the cheapest way to check that autodetection lands on the right forge
+and that the token carries the scopes it needs, before a first run pulls
+gigabytes. `--include-archived` widens the list exactly as it widens a run;
+`--prune` is refused alongside it, since a listing has nothing to delete.
 
 ### Stale mirrors
 

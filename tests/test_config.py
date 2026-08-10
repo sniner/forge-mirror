@@ -20,6 +20,7 @@ def make_args(**overrides: object) -> argparse.Namespace:
         "token": None,
         "target_dir": None,
         "owner": None,
+        "list": False,
         "ssh": False,
         "include_archived": False,
         "prune": False,
@@ -107,6 +108,25 @@ def test_missing_required_values_name_their_env_variable() -> None:
     assert "--token (FORGE_MIRROR_TOKEN)" in message
     assert "--url (FORGE_MIRROR_URL)" in message
     assert "--target-dir (FORGE_MIRROR_DIR)" in message
+
+
+def test_list_does_not_need_a_target_directory() -> None:
+    config = build_config(make_args(list=True, url="https://gl.example", token="t"))
+
+    assert config.list_only is True
+    assert config.target_dir is None
+
+
+def test_target_dir_is_still_required_without_list() -> None:
+    with pytest.raises(ValueError, match="--target-dir"):
+        build_config(make_args(url="https://gl.example", token="t"))
+
+
+def test_list_and_prune_together_are_refused() -> None:
+    with pytest.raises(ValueError, match="--prune"):
+        build_config(
+            make_args(list=True, prune=True, url="https://gl.example", token="t")
+        )
 
 
 def test_invalid_jobs_raises() -> None:

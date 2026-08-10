@@ -23,6 +23,7 @@ _BASE = Config(
     token="t",
     target_dir=Path("/d"),
     owner=None,
+    list_only=False,
     use_ssh=False,
     include_archived=False,
     prune=False,

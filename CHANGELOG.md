@@ -22,6 +22,9 @@ All notable changes to this project are documented here. The format is based on
   bare `404`
 - **`FORGE_MIRROR_PROVIDER`** names the forge from the environment; `--provider auto` overrides it
   back to autodetection for a single run
+- **`--list`** prints the repositories a run would take, one per line, and stops there; nothing is
+  cloned, so `--target-dir` is not needed. The names go to standard output and the reporting to the
+  log, so the list can be piped into `wc -l` or a filter. `--prune` is refused alongside it
 
 ### Changed
 

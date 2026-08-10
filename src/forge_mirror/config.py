@@ -25,8 +25,10 @@ class Config:
     provider: str
     base_url: str
     token: str
-    target_dir: Path
+    # None only when list_only is set: a listing has nowhere to write.
+    target_dir: Path | None
     owner: str | None
+    list_only: bool
     use_ssh: bool
     include_archived: bool
     prune: bool
@@ -46,22 +48,24 @@ def build_config(args: argparse.Namespace) -> Config:
     base_url = args.url or os.environ.get(ENV_URL) or _DEFAULT_URL.get(provider)
     target_dir = args.target_dir or os.environ.get(ENV_TARGET_DIR)
 
-    missing = [
-        f"{name} ({env})"
-        for name, env, value in (
-            ("--token", ENV_TOKEN, token),
-            ("--url", ENV_URL, base_url),
-            ("--target-dir", ENV_TARGET_DIR, target_dir),
-        )
-        if not value
-    ]
+    required = [("--token", ENV_TOKEN, token), ("--url", ENV_URL, base_url)]
+    if not args.list:
+        required.append(("--target-dir", ENV_TARGET_DIR, target_dir))
+
+    missing = [f"{name} ({env})" for name, env, value in required if not value]
     if missing:
         raise ValueError(
             "Missing required options: "
             + ", ".join(missing)
             + " -- pass the argument or set the environment variable named after it"
         )
-    assert token is not None and base_url is not None and target_dir is not None
+    assert token is not None and base_url is not None
+
+    if args.list and args.prune:
+        raise ValueError(
+            "--list writes nothing, so --prune would have nothing to delete "
+            "-- drop one of the two"
+        )
 
     if args.jobs < 1:
         raise ValueError("--jobs must be at least 1")
@@ -73,8 +77,9 @@ def build_config(args: argparse.Namespace) -> Config:
         provider=provider,
         base_url=base_url.rstrip("/"),
         token=token,
-        target_dir=Path(target_dir).expanduser(),
+        target_dir=Path(target_dir).expanduser() if target_dir else None,
         owner=args.owner,
+        list_only=args.list,
         use_ssh=args.ssh,
         include_archived=args.include_archived,
         prune=args.prune,

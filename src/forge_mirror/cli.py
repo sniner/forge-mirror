@@ -7,7 +7,7 @@ import httpx
 
 from forge_mirror import __version__
 from forge_mirror.config import build_config
-from forge_mirror.mirror import sync_all
+from forge_mirror.mirror import list_repos, sync_all
 from forge_mirror.providers import PROVIDER_CHOICES, create_provider
 from forge_mirror.providers.base import describe_http_error
 
@@ -46,6 +46,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--owner",
         help="Restrict to a single GitHub user or organization "
         "(GitHub only; default: all visible repositories)",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List the repositories that would be mirrored, one per line, and "
+        "stop there; nothing is cloned, so --target-dir is not needed",
     )
     parser.add_argument(
         "--ssh",
@@ -127,6 +133,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         with provider:
+            if config.list_only:
+                list_repos(provider, config)
+                return 0
             result = sync_all(provider, config)
     except httpx.HTTPStatusError as exc:
         logger.error("%s API error: %s", provider.name, describe_http_error(exc))

@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import final
 
@@ -11,6 +12,7 @@ from forge_mirror.mirror import (
     SyncResult,
     find_stale_mirrors,
     iter_local_mirrors,
+    list_repos,
     mask_token,
     remove_mirror,
     repo_path,
@@ -44,6 +46,7 @@ def make_config(
         token="secret",
         target_dir=target_dir,
         owner=owner,
+        list_only=False,
         use_ssh=use_ssh,
         include_archived=include_archived,
         prune=prune,
@@ -351,3 +354,47 @@ def test_sync_all_keeps_archived_repositories_when_pruning(
 
     assert result.stale == 0
     assert (tmp_path / "g/archived.git").exists()
+
+
+def test_list_repos_writes_plain_names_to_stdout(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    provider = _FakeProvider([make_repo("g/one"), make_repo("g/two")])
+
+    count = list_repos(provider, make_config())
+
+    assert count == 2
+    # Nothing but the names, so the list survives a pipe.
+    assert capsys.readouterr().out == "g/one\ng/two\n"
+
+
+def test_list_repos_leaves_archived_out_by_default(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    provider = _FakeProvider([make_repo("g/active"), make_repo("g/old", archived=True)])
+
+    count = list_repos(provider, make_config())
+
+    assert count == 1
+    assert capsys.readouterr().out == "g/active\n"
+
+
+def test_list_repos_takes_archived_along_when_asked(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    provider = _FakeProvider([make_repo("g/active"), make_repo("g/old", archived=True)])
+
+    count = list_repos(provider, make_config(include_archived=True))
+
+    assert count == 2
+    assert capsys.readouterr().out == "g/active\ng/old\n"
+
+
+def test_list_repos_needs_no_target_directory(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    provider = _FakeProvider([make_repo("g/one")])
+    config = replace(make_config(), target_dir=None, list_only=True)
+
+    assert list_repos(provider, config) == 1
+    assert capsys.readouterr().out == "g/one\n"
