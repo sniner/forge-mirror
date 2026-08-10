@@ -3,11 +3,13 @@ import pytest
 import respx
 
 from forge_mirror.providers.base import Repo
+from forge_mirror.providers.forgejo import ForgejoProvider
 from forge_mirror.providers.github import GitHubProvider
 from forge_mirror.providers.gitlab import GitLabProvider
 
 GITLAB_URL = "https://gl.example"
 GITHUB_URL = "https://api.github.com"
+FORGEJO_URL = "https://fj.example"
 
 
 def make_repo() -> Repo:
@@ -152,6 +154,50 @@ def test_github_owner_user_uses_users_endpoint() -> None:
     assert names == ["alice/dotfiles"]
 
 
+def test_forgejo_clone_url_embeds_token() -> None:
+    provider = ForgejoProvider(FORGEJO_URL, "secret", 10.0)
+    url = provider.clone_url(make_repo(), use_ssh=False)
+    assert url == "https://token:secret@gl.example/group/repo.git"
+
+
+@respx.mock
+def test_forgejo_iter_repos_maps_fields_and_authenticates() -> None:
+    route = respx.get(f"{FORGEJO_URL}/api/v1/user/repos").mock(
+        return_value=httpx.Response(
+            200, json=[_forgejo_item("team/svc"), _forgejo_item("me/old", archived=True)]
+        )
+    )
+    with ForgejoProvider(FORGEJO_URL, "t", 10.0) as provider:
+        repos = list(provider.iter_repos())
+
+    assert route.called
+    # Forgejo insists on the word "token", a Bearer prefix is not the same thing.
+    assert route.calls.last.request.headers["Authorization"] == "token t"
+    assert repos == [
+        Repo("team/svc", "git@fj:team/svc.git", "https://fj/team/svc.git", False),
+        Repo("me/old", "git@fj:me/old.git", "https://fj/me/old.git", True),
+    ]
+
+
+@respx.mock
+def test_forgejo_follows_link_header_pagination() -> None:
+    page2 = f"{FORGEJO_URL}/api/v1/user/repos?limit=50&page=2"
+    respx.get(f"{FORGEJO_URL}/api/v1/user/repos").mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json=[_forgejo_item("me/one")],
+                headers={"Link": f'<{page2}>; rel="next"'},
+            ),
+            httpx.Response(200, json=[_forgejo_item("me/two")]),
+        ]
+    )
+    with ForgejoProvider(FORGEJO_URL, "t", 10.0) as provider:
+        names = [r.full_name for r in provider.iter_repos()]
+
+    assert names == ["me/one", "me/two"]
+
+
 @respx.mock
 def test_raises_on_http_error() -> None:
     respx.get(f"{GITLAB_URL}/api/v4/projects").mock(
@@ -177,4 +223,13 @@ def _github_item(full_name: str) -> dict[str, object]:
         "ssh_url": f"git@github.com:{full_name}.git",
         "clone_url": f"https://github.com/{full_name}.git",
         "archived": False,
+    }
+
+
+def _forgejo_item(full_name: str, archived: bool = False) -> dict[str, object]:
+    return {
+        "full_name": full_name,
+        "ssh_url": f"git@fj:{full_name}.git",
+        "clone_url": f"https://fj/{full_name}.git",
+        "archived": archived,
     }

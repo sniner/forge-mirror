@@ -1,8 +1,8 @@
 # forge-mirror
 
 Creates pull mirrors (bare repositories) of **all** repositories visible to an
-access token on a Git forge and updates existing mirrors. Supports **GitLab**
-and **GitHub**. Ideal for periodic backups, e.g. via cron.
+access token on a Git forge and updates existing mirrors. Supports **GitLab**,
+**GitHub** and **Forgejo**. Ideal for periodic backups, e.g. via cron.
 
 - Clones new repositories with `git clone --mirror`.
 - Updates existing mirrors with `git remote update --prune`.
@@ -24,14 +24,15 @@ append `@<tag>`, e.g. `git+https://github.com/sniner/forge-mirror@v0.2.0`.
 
 ## Usage
 
-Select the forge with `--provider` (default: `gitlab`). Configuration is provided
-via CLI argument or environment variable (arguments take precedence):
+Select the forge with `--provider` (`gitlab`, `github` or `forgejo`, default:
+`gitlab`). Configuration is provided via CLI argument or environment variable
+(arguments take precedence):
 
-| Argument           | Environment variable          | Meaning                          |
-| ------------------ | ----------------------------- | -------------------------------- |
-| `--url`            | `GITLAB_URL` / `GITHUB_URL`   | Base URL of the forge API        |
-| `--token`          | `GITLAB_TOKEN` / `GITHUB_TOKEN` | Access token                   |
-| `-d, --target-dir` | `FORGE_MIRROR_DIR`            | Target directory for the mirrors |
+| Argument           | Environment variable                            | Meaning                          |
+| ------------------ | ----------------------------------------------- | -------------------------------- |
+| `--url`            | `GITLAB_URL` / `GITHUB_URL` / `FORGEJO_URL`     | Base URL of the forge API        |
+| `--token`          | `GITLAB_TOKEN` / `GITHUB_TOKEN` / `FORGEJO_TOKEN` | Access token                   |
+| `-d, --target-dir` | `FORGE_MIRROR_DIR`                              | Target directory for the mirrors |
 
 The environment variable used for token and URL depends on the selected provider.
 For GitHub, `--url` defaults to `https://api.github.com` (set it to your GitHub
@@ -74,6 +75,33 @@ The token needs read access to repository contents: a classic PAT with the
 **Metadata: Read**. Without `--owner`, `GET /user/repos` lists everything the
 token can see; with `--owner` only that user's or organization's repositories
 are mirrored.
+
+### Forgejo
+
+```sh
+export FORGEJO_TOKEN=xxxxxxxxxxxxxxxxxxxx
+uv run forge-mirror \
+    --provider forgejo \
+    --url https://forgejo.example.local \
+    --target-dir /srv/backup/forgejo
+```
+
+Forgejo is self-hosted, so `--url` has no default; point it at the instance
+itself, the API path `/api/v1` is appended.
+
+The token needs exactly one scope: **`repository`** at **Read** level. It covers
+both the repository listing and the Git transfer over HTTPS, and none of the
+other categories (`admin`, `organization`, `package`, `misc`, …) is required —
+organisation repositories are listed under the repository scope as well. A token
+with no scope at all is refused even for public repositories. In `--ssh` mode
+the Git transfer uses your SSH key, but the listing still needs
+`read:repository`. Listing uses
+`/api/v1/user/repos`, which returns the repositories the token's user owns plus
+those they reach as a collaborator or through an organisation team — public
+repositories of *other* users on the instance are not pulled in.
+
+`--owner` is not available for Forgejo. The same API also serves **Gitea**,
+which this provider has not been tested against.
 
 ### Stale mirrors
 

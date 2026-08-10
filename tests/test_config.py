@@ -25,7 +25,14 @@ def make_args(**overrides: object) -> argparse.Namespace:
 
 
 def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in ("GITLAB_URL", "GITHUB_URL", "GITLAB_TOKEN", "GITHUB_TOKEN"):
+    for var in (
+        "GITLAB_URL",
+        "GITHUB_URL",
+        "FORGEJO_URL",
+        "GITLAB_TOKEN",
+        "GITHUB_TOKEN",
+        "FORGEJO_TOKEN",
+    ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.delenv("FORGE_MIRROR_DIR", raising=False)
 
@@ -65,6 +72,38 @@ def test_github_token_env_is_separate(monkeypatch: pytest.MonkeyPatch) -> None:
     config = build_config(make_args(provider="github", target_dir="/d"))
 
     assert config.token == "gh-token"
+
+
+def test_forgejo_uses_its_own_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("GITLAB_TOKEN", "gl-token")
+    monkeypatch.setenv("FORGEJO_TOKEN", "fj-token")
+    monkeypatch.setenv("FORGEJO_URL", "https://fj.example")
+
+    config = build_config(make_args(provider="forgejo", target_dir="/d"))
+
+    assert config.token == "fj-token"
+    assert config.base_url == "https://fj.example"
+
+
+def test_forgejo_requires_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    with pytest.raises(ValueError, match="--url"):
+        build_config(make_args(provider="forgejo", token="t", target_dir="/d"))
+
+
+def test_owner_is_rejected_for_forgejo(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    with pytest.raises(ValueError, match="--owner"):
+        build_config(
+            make_args(
+                provider="forgejo",
+                url="https://fj.example",
+                token="t",
+                target_dir="/d",
+                owner="x",
+            )
+        )
 
 
 def test_github_defaults_to_public_api(monkeypatch: pytest.MonkeyPatch) -> None:

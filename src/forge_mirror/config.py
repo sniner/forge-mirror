@@ -9,8 +9,16 @@ from pathlib import Path
 ENV_TARGET_DIR = "FORGE_MIRROR_DIR"
 
 # Provider-specific environment variables for token and base URL.
-_ENV_TOKEN = {"gitlab": "GITLAB_TOKEN", "github": "GITHUB_TOKEN"}
-_ENV_URL = {"gitlab": "GITLAB_URL", "github": "GITHUB_URL"}
+_ENV_TOKEN = {
+    "gitlab": "GITLAB_TOKEN",
+    "github": "GITHUB_TOKEN",
+    "forgejo": "FORGEJO_TOKEN",
+}
+_ENV_URL = {
+    "gitlab": "GITLAB_URL",
+    "github": "GITHUB_URL",
+    "forgejo": "FORGEJO_URL",
+}
 
 # GitHub has a single well-known API endpoint; GitLab is self-hosted.
 _DEFAULT_URL = {"github": "https://api.github.com"}

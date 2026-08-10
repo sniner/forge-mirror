@@ -16,8 +16,8 @@ logger = logging.getLogger("forge_mirror")
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="forge-mirror",
-        description="Mirror all repositories of a Git forge (GitLab or GitHub) "
-        "as bare mirrors and update existing ones.",
+        description="Mirror all repositories of a Git forge (GitLab, GitHub or "
+        "Forgejo) as bare mirrors and update existing ones.",
     )
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument(
@@ -28,12 +28,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--url",
-        help="Base URL of the forge API "
-        "(env: GITLAB_URL/GITHUB_URL; GitHub defaults to https://api.github.com)",
+        help="Base URL of the forge API (env: GITLAB_URL/GITHUB_URL/FORGEJO_URL; "
+        "GitHub defaults to https://api.github.com)",
     )
     parser.add_argument(
         "--token",
-        help="Personal/project access token (env: GITLAB_TOKEN/GITHUB_TOKEN)",
+        help="Personal/project access token "
+        "(env: GITLAB_TOKEN/GITHUB_TOKEN/FORGEJO_TOKEN)",
     )
     parser.add_argument(
         "-d",

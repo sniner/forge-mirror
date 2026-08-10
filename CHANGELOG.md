@@ -3,6 +3,18 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com).
 
+## [0.4.0] - 2026-08-10
+
+### Added
+
+- **Forgejo** support via `--provider forgejo`, using the Forgejo REST API v1 at `/api/v1` on the
+  instance given with `--url`; the token needs the `read:repository` scope
+- **`FORGEJO_TOKEN`** and **`FORGEJO_URL`** environment variables
+
+Listing mirrors what the token's user owns plus what they reach as a collaborator or through an
+organisation team. `--owner` remains GitHub-only. The provider has been written against the
+documented API and is covered by tests, but has not been run against a live instance yet.
+
 ## [0.3.0] - 2026-08-10
 
 ### Added
