@@ -5,8 +5,8 @@ from typing import ClassVar
 
 from forge_mirror.providers.base import Provider, Repo
 
-# An instance clamps the page size to its own max_response_items, 50 by
-# default, and the Link header carries the pagination either way.
+# An instance limits the page size to its max_response_items setting, 50 by
+# default. Pagination follows the Link header either way.
 _PAGE_SIZE = 50
 
 _REPOS_PATH = "/api/v1/user/repos"
@@ -17,15 +17,15 @@ class ForgejoProvider(Provider):
 
     name = "forgejo"
 
-    # Forgejo accepts a git request over HTTPS as soon as the basic-auth
-    # password is a valid access token, whatever the user name says.
+    # Forgejo accepts git over HTTPS with any user name if the basic-auth
+    # password is a valid access token.
     https_auth_user = "token"
 
     probe_path = _REPOS_PATH
     probe_params: ClassVar[dict[str, str | int]] = {"limit": 1}
 
     def _auth_headers(self, token: str) -> dict[str, str]:
-        # Forgejo wants the literal word "token" here, not "Bearer".
+        # Forgejo expects the scheme name "token" here, not "Bearer".
         return {"Authorization": f"token {token}"}
 
     def iter_repos(self) -> Iterator[Repo]:

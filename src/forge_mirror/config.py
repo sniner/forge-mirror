@@ -10,11 +10,11 @@ ENV_URL = "FORGE_MIRROR_URL"
 ENV_TOKEN = "FORGE_MIRROR_TOKEN"
 ENV_TARGET_DIR = "FORGE_MIRROR_DIR"
 
-# Stands in for the provider until the forge has said which one it is.
+# Provider value for detecting the forge from its API.
 AUTO = "auto"
 
-# GitHub has a single well-known API endpoint; the others are self-hosted, and
-# without a named provider there is nothing to guess a URL from.
+# GitHub has a single public API URL. GitLab and Forgejo are self-hosted, and
+# with detection the forge is not known yet, so there is no default for them.
 _DEFAULT_URL = {"github": "https://api.github.com"}
 
 
@@ -25,7 +25,7 @@ class Config:
     provider: str
     base_url: str
     token: str
-    # None only when list_only is set: a listing has nowhere to write.
+    # None only with list_only, which writes nothing.
     target_dir: Path | None
     owner: str | None
     list_only: bool
@@ -58,20 +58,20 @@ def build_config(args: argparse.Namespace) -> Config:
         raise ValueError(
             "Missing required options: "
             + ", ".join(missing)
-            + " -- pass the argument or set the environment variable named after it"
+            + "; pass the option or set the environment variable in parentheses"
         )
     assert token is not None and base_url is not None
 
     if args.list and args.prune:
         raise ValueError(
-            "--list writes nothing, so --prune would have nothing to delete "
-            "-- drop one of the two"
+            "--prune has no effect with --list, which only lists repositories; "
+            "drop one of them"
         )
 
     if args.list and args.dry_run:
         raise ValueError(
-            "--list names what the forge has, --dry-run what a run would do "
-            "with it -- pick the question you want answered"
+            "--list and --dry-run cannot be combined; use --list to see the "
+            "repositories, --dry-run to see what a run would change"
         )
 
     if args.jobs < 1:

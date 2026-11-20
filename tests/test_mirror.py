@@ -551,7 +551,7 @@ def test_dry_run_neither_mirrors_nor_deletes(
     assert str(stale) in caplog.text
 
 
-def test_dry_run_without_prune_says_how_to_carry_it_out(
+def test_dry_run_without_prune_names_the_option(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.setattr(mirror_mod, "remove_mirror", _explode)
@@ -561,8 +561,7 @@ def test_dry_run_without_prune_says_how_to_carry_it_out(
     with caplog.at_level(logging.INFO):
         dry_run(provider, make_config(target_dir=tmp_path))
 
-    assert "add --prune" in caplog.text
-    assert "drop --dry-run" in caplog.text
+    assert "with --prune they would be deleted" in caplog.text
 
 
 def test_dry_run_reports_a_cancelled_prune(
@@ -576,7 +575,7 @@ def test_dry_run_reports_a_cancelled_prune(
     with caplog.at_level(logging.INFO):
         dry_run(provider, make_config(target_dir=tmp_path, prune=True, prune_limit=2))
 
-    assert "would delete nothing here" in caplog.text
+    assert "would delete nothing" in caplog.text
     assert "--prune-limit=2" in caplog.text
 
 
@@ -589,4 +588,4 @@ def test_dry_run_leaves_archived_out_by_default(
         dry_run(provider, make_config(target_dir=tmp_path))
 
     assert "1 repositories: 1 to clone, 0 to update" in caplog.text
-    assert "1 archived one(s) left out" in caplog.text
+    assert "Archived repositories skipped: 1" in caplog.text

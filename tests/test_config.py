@@ -131,7 +131,7 @@ def test_list_and_prune_together_are_refused() -> None:
 
 
 def test_list_and_dry_run_together_are_refused() -> None:
-    with pytest.raises(ValueError, match="pick the question"):
+    with pytest.raises(ValueError, match="cannot be combined"):
         build_config(
             make_args(list=True, dry_run=True, url="https://gl.example", token="t")
         )

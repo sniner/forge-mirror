@@ -148,8 +148,8 @@ def iter_local_mirrors(root: Path) -> Iterator[Path]:
             if entry.name.endswith(".git"):
                 yield entry
             elif not entry.name.startswith("."):
-                # Namespaces never start with a dot, so skipping those keeps
-                # snapshot directories (.zfs, .snapshots) out of the way.
+                # Namespaces never start with a dot, so this also skips snapshot
+                # directories such as .zfs and .snapshots.
                 pending.append(entry)
 
 
@@ -205,8 +205,17 @@ def remove_mirror(path: Path, target_dir: Path) -> bool:
 
 
 _NO_LISTING = (
-    "Not looking for stale mirrors: the forge listed no repositories at all, "
-    "which points at the token rather than at an empty forge"
+    "Skipping the check for stale mirrors: the forge listed no repositories, "
+    "usually because the token lost its access; check the token's scopes"
+)
+
+# Logged before the list of mirrors a prune would delete, when there are more
+# than --prune-limit of them.
+_OVER_LIMIT = (
+    "%d mirrors have no repository on the forge, more than --prune-limit=%d. That "
+    "many usually means the token lost access to some repositories. Check the "
+    "list below; if they are really gone, run again with a higher --prune-limit "
+    "(0 disables the check):"
 )
 
 
@@ -216,7 +225,7 @@ def _log_paths(level: int, paths: Iterable[Path]) -> None:
 
 
 def handle_stale_mirrors(repos: list[Repo], config: Config) -> tuple[int, int, int]:
-    """Report the mirrors without a remote repository, and with --prune drop them.
+    """Report the mirrors without a repository on the forge, delete them with --prune.
 
     Returns (found, removed, errors).
     """
@@ -240,13 +249,7 @@ def handle_stale_mirrors(repos: list[Repo], config: Config) -> tuple[int, int, i
         return len(stale), 0, 0
 
     if config.prune_limit and len(stale) > config.prune_limit:
-        logger.error(
-            "Deleting nothing: %d mirrors would go, over --prune-limit=%d. Such a jump "
-            "is usually a token that lost access, not repositories that are gone. "
-            "Check this list, then raise --prune-limit (0 turns the check off):",
-            len(stale),
-            config.prune_limit,
-        )
+        logger.error("Deleting nothing: " + _OVER_LIMIT, len(stale), config.prune_limit)
         _log_paths(logging.ERROR, stale)
         return len(stale), 0, len(stale)
 
@@ -255,23 +258,22 @@ def handle_stale_mirrors(repos: list[Repo], config: Config) -> tuple[int, int, i
 
 
 def list_repos(provider: RepoSource, config: Config) -> int:
-    """Report what a mirror run would take, and return how many that is.
+    """Print the repositories a mirror run would take, and return their number.
 
-    The names go to standard output, one per line and nothing else, so the
-    list can be counted or filtered by another command; what the run has to
-    say about itself stays on the log, where it does not get in the way.
+    The names go to standard output, one per line, and the log to standard
+    error, so the list can be piped into another command.
     """
     listed = list(provider.iter_repos())
     repos = [r for r in listed if config.include_archived or not r.archived]
     for repo in repos:
-        # Not the logger: this list is the answer, not a remark about the run.
+        # print, not the logger: the list is the output of --list.
         print(repo.full_name)
 
     skipped = len(listed) - len(repos)
     if skipped:
         logger.info(
-            "%d repositories would be mirrored, %d archived one(s) left out "
-            "(--include-archived takes them along)",
+            "%d repositories would be mirrored; archived repositories skipped: %d "
+            "(--include-archived adds them)",
             len(repos),
             skipped,
         )
@@ -281,7 +283,7 @@ def list_repos(provider: RepoSource, config: Config) -> int:
 
 
 def _report_stale_dry_run(listed: list[Repo], config: Config, target_dir: Path) -> None:
-    """Say what the stale mirrors are and what --prune would make of them."""
+    """Log the stale mirrors and what --prune would do with them."""
     if not listed:
         logger.warning("%s", _NO_LISTING)
         return
@@ -292,17 +294,14 @@ def _report_stale_dry_run(listed: list[Repo], config: Config, target_dir: Path) 
 
     if not config.prune:
         logger.warning(
-            "%d mirror(s) have no repository on the forge; add --prune to see "
-            "them as deletions, and drop --dry-run to carry them out:",
+            "%d mirror(s) have no repository on the forge; with --prune they "
+            "would be deleted:",
             len(stale),
         )
         _log_paths(logging.WARNING, stale)
     elif config.prune_limit and len(stale) > config.prune_limit:
         logger.error(
-            "--prune would delete nothing here: %d mirrors are over "
-            "--prune-limit=%d, which cancels the deletion completely. Such a "
-            "jump is usually a token that lost access. Check this list, then "
-            "raise the limit (0 turns the check off):",
+            "--prune would delete nothing: " + _OVER_LIMIT,
             len(stale),
             config.prune_limit,
         )
@@ -313,10 +312,10 @@ def _report_stale_dry_run(listed: list[Repo], config: Config, target_dir: Path) 
 
 
 def dry_run(provider: RepoSource, config: Config) -> None:
-    """Report what a mirror run would do, and do none of it.
+    """Log what a mirror run would do, without doing it.
 
-    The listing is read in full and the local mirrors are inspected, exactly as
-    a real run would; nothing is cloned, updated or deleted.
+    The listing is read in full and the local mirrors are checked as in a real
+    run; nothing is cloned, updated or deleted.
     """
     target_dir = config.target_dir
     assert target_dir is not None, "a dry run needs a target directory"
@@ -333,25 +332,25 @@ def dry_run(provider: RepoSource, config: Config) -> None:
         len(plan),
         len(plan) - updates,
         updates,
-        " (-v names the updates too)" if updates else "",
+        " (-v lists the updates)" if updates else "",
     )
     skipped = len(listed) - len(repos)
     if skipped:
         logger.info(
-            "%d archived one(s) left out (--include-archived takes them along)",
+            "Archived repositories skipped: %d (--include-archived adds them)",
             skipped,
         )
 
     for repo, exists in plan:
-        # The updates are the uninteresting majority of a settled mirror
-        # directory; the clones are what this run would actually change.
+        # Once the mirrors exist, nearly all repositories are updates, so only
+        # the clones are logged at INFO.
         if exists:
             logger.debug("Would update %s", repo.full_name)
         else:
             logger.info("Would clone %s", repo.full_name)
 
     _report_stale_dry_run(listed, config, target_dir)
-    logger.info("Dry run finished, nothing was touched")
+    logger.info("Dry run finished, nothing was changed")
 
 
 @dataclass
@@ -359,8 +358,8 @@ class SyncResult:
     """Result of a complete mirror run.
 
     stale counts the mirrors without a repository on the forge, removed those
-    of them that --prune deleted, and unremoved those it was asked to delete
-    but could not -- a run is only clean when both failed and unremoved are 0.
+    of them that --prune deleted, and unremoved those it had to delete but
+    could not. A run succeeded only if failed and unremoved are both 0.
     """
 
     succeeded: int
@@ -373,9 +372,9 @@ class SyncResult:
 def sync_all(provider: RepoSource, config: Config) -> SyncResult:
     """Mirror all (non-archived) repositories in parallel, then handle stale ones.
 
-    The listing is read completely before anything else happens: a forge that
-    fails halfway through pagination has to abort the run, because a partial
-    list would make pruning read the missing repositories as deleted.
+    The listing is read completely first. If pagination fails halfway, the run
+    aborts, because with a partial list pruning would treat the missing
+    repositories as deleted.
     """
     target_dir = config.target_dir
     assert target_dir is not None, "a mirror run needs a target directory"

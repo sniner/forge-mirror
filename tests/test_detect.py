@@ -112,7 +112,7 @@ def test_a_forge_that_refuses_the_token_is_named() -> None:
     with pytest.raises(ValueError, match="forgejo") as caught:
         create_provider(make_config())
 
-    assert "may not list repositories" in str(caught.value)
+    assert "rejects the token" in str(caught.value)
 
 
 @respx.mock
@@ -130,7 +130,7 @@ def test_an_html_refusal_is_the_web_front_end_not_the_forge() -> None:
         create_provider(make_config())
 
     message = str(caught.value)
-    assert f"{URL} is gitlab, but the token may not list repositories" in message
+    assert f"{URL} is gitlab, but rejects the token" in message
     assert "github" not in message
     assert "forgejo" not in message
 
@@ -140,10 +140,10 @@ def test_several_refusals_do_not_claim_an_identity() -> None:
     refusal = httpx.Response(401, json={"message": "denied"})
     mock_probes(gitlab=refusal, github=refusal, forgejo=refusal)
 
-    with pytest.raises(ValueError, match="refuses the token") as caught:
+    with pytest.raises(ValueError, match="rejects the token") as caught:
         create_provider(make_config())
 
-    assert "is gitlab and" not in str(caught.value)
+    assert not any(name in str(caught.value) for name in ("gitlab", "github", "forgejo"))
 
 
 @respx.mock

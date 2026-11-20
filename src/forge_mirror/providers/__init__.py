@@ -1,4 +1,4 @@
-"""Forge providers, and the choice between naming one and letting it identify itself."""
+"""Forge providers and the detection of the forge at a URL."""
 
 import logging
 
@@ -12,7 +12,7 @@ from forge_mirror.providers.gitlab import GitLabProvider
 
 logger = logging.getLogger(__name__)
 
-# Asked in this order; the first forge that answers is the one that is there.
+# Detection order; the first forge whose listing endpoint returns a list is used.
 PROVIDER_CLASSES: tuple[type[Provider], ...] = (
     GitLabProvider,
     GitHubProvider,
@@ -23,35 +23,36 @@ PROVIDER_CHOICES = (AUTO, *PROVIDERS)
 
 
 def create_provider(config: Config) -> Provider:
-    """The provider named in the config, or the one the forge turns out to be."""
+    """The provider named in the config, or the detected one."""
     provider = _detect(config) if config.provider == AUTO else _named(config)
     if config.owner is not None and provider.name != GitHubProvider.name:
         provider.close()
         raise ValueError(
-            f"--owner names a GitHub user or organisation, and {provider.base_url} "
-            f"is {provider.name} -- drop it to mirror everything the token sees"
+            f"--owner works only with GitHub, and {provider.base_url} is "
+            f"{provider.name}; drop --owner to mirror all repositories the token "
+            "can see"
         )
     logger.info("Forge is %s at %s", provider.name, provider.base_url)
     return provider
 
 
 def _named(config: Config) -> Provider:
-    """The provider the user asked for by name."""
+    """The provider the user named."""
     for cls in PROVIDER_CLASSES:
         if cls.name == config.provider:
             return cls.from_config(config)
     raise ValueError(
-        f"Unknown forge {config.provider!r} -- name one of "
-        f"{', '.join(PROVIDER_CHOICES)} with --provider"
+        f"Unknown forge {config.provider!r}; --provider and FORGE_MIRROR_PROVIDER "
+        f"take one of {', '.join(PROVIDER_CHOICES)}"
     )
 
 
 def _detect(config: Config) -> Provider:
-    """Ask each forge in turn whether the repositories at the URL are its own.
+    """Probe the listing endpoint of each forge in turn.
 
-    Every candidate asks with its own authentication scheme on its own listing
-    endpoint, so the one that answers is the one that will work; to the others
-    the request is for a route they do not serve, and they say so with a 404.
+    Each probe uses that forge's authentication, so the first forge that returns
+    a list is the one at the URL, and listing will work with this token. The
+    other forges return 404 for a path they do not serve.
     """
     refused: list[str] = []
     for cls in PROVIDER_CLASSES:
@@ -68,20 +69,20 @@ def _detect(config: Config) -> Provider:
         if result.refused:
             refused.append(cls.name)
 
-    # Only one forge refusing identifies it, which is worth saying. Several mean
-    # something in front of them is answering, and naming them all would lie.
+    # A single rejecting forge is the forge at the URL. If several reject the
+    # token, a proxy in front of the server probably answered, and the forge is
+    # unknown.
     if len(refused) == 1:
         raise ValueError(
-            f"{config.base_url} is {refused[0]}, but the token may not list "
-            "repositories there -- check that it is valid and carries the "
-            "documented scopes"
+            f"{config.base_url} is {refused[0]}, but rejects the token; check that "
+            "the token is valid and has the scopes listed in the README"
         )
     if refused:
         raise ValueError(
-            f"{config.base_url} refuses the token -- check that it is valid and "
-            "carries the documented scopes"
+            f"{config.base_url} rejects the token; check that it is valid and has "
+            "the scopes listed in the README"
         )
     raise ValueError(
-        f"No GitLab, GitHub or Forgejo API answers at {config.base_url} -- check "
-        "the URL, or name the forge with --provider"
+        f"No GitLab, GitHub or Forgejo API found at {config.base_url}; check the "
+        "URL, or name the forge with --provider"
     )

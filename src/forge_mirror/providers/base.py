@@ -15,11 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 def _error_detail(response: httpx.Response) -> str:
-    """The forge's own explanation of a failed request, if the body carries one.
+    """The error message in the body of a failed response, if there is one.
 
-    GitLab, GitHub and Forgejo all put it under "message"; anything else is
-    passed through as trimmed text, which is what a reverse proxy in front of
-    the forge tends to answer with.
+    GitLab, GitHub and Forgejo put it under "message". A body that is not JSON,
+    typically from a reverse proxy in front of the forge, is returned as trimmed
+    text.
     """
     try:
         body = response.json()
@@ -34,7 +34,7 @@ def _error_detail(response: httpx.Response) -> str:
 
 
 def describe_http_error(exc: httpx.HTTPStatusError) -> str:
-    """One line naming the request that failed and what the forge said about it."""
+    """One line with the failed request and the error message of the response."""
     url = exc.request.url.copy_with(query=None)
     summary = f"{exc.response.status_code} for {exc.request.method} {url}"
     detail = _error_detail(exc.response)
@@ -59,13 +59,13 @@ class Credentials:
     password: str
 
 
-# Answered by a forge that serves the API but will not let this token read.
+# Status codes of a forge API that rejects the token.
 _REFUSED = (httpx.codes.UNAUTHORIZED, httpx.codes.FORBIDDEN)
 
 
 @dataclass(frozen=True)
 class ProbeResult:
-    """What a forge answered when asked whether the repositories are its own."""
+    """Result of a probe request to the listing endpoint of one forge."""
 
     accepted: bool
     refused: bool
@@ -86,9 +86,9 @@ class Provider(ABC):
     # "x-access-token".
     https_auth_user: ClassVar[str]
 
-    # A one-page listing request, used to recognise the forge. Only this forge's
-    # API serves the path, and only a token that may read repositories gets a
-    # list back — which is what iter_repos needs, nothing more and nothing less.
+    # A one-page listing request used for detection. Only this forge's API serves
+    # the path, and it returns a list only for a token that may list
+    # repositories, which is what iter_repos needs.
     probe_path: ClassVar[str]
     probe_params: ClassVar[dict[str, str | int]]
 
@@ -104,12 +104,12 @@ class Provider(ABC):
 
     @classmethod
     def from_config(cls, config: Config) -> Self:
-        """Build this provider for a run, with the URL it actually talks to."""
+        """Build this provider for a run, with the normalized API URL."""
         return cls(cls.normalize_url(config.base_url), config.token, config.timeout)
 
     @classmethod
     def normalize_url(cls, url: str) -> str:
-        """The API base URL this provider uses for a URL as the user gave it."""
+        """The API base URL for the URL the user gave."""
         return url
 
     @abstractmethod
@@ -121,22 +121,22 @@ class Provider(ABC):
         """Iterate over all repositories visible to the token."""
 
     def probe(self) -> ProbeResult:
-        """Ask whether this forge answers at the configured URL for this token.
+        """Request one listing page to test whether this forge is at the URL.
 
-        A JSON list back means both, so a positive probe is a promise that
-        iter_repos will work rather than a guess about the software. Transport
-        errors are not caught: an unreachable host is the same for every forge
-        and should be reported once, not tried three times.
+        A JSON list means that this forge serves the URL and accepts the token,
+        so iter_repos will work after a positive probe. Transport errors are not
+        caught: an unreachable host fails the same way for every forge and is
+        reported once instead of three times.
         """
         response = self._client.get(self.probe_path, params=self.probe_params)
         status = response.status_code
         try:
             body = response.json()
         except ValueError:
-            # Anything but JSON under an API path is the web front end or a
-            # proxy talking, not this forge's API. gitlab.com answers 403 with
-            # an HTML page for every route it does not serve, and taking that
-            # for a refusal would make it look like all three forges at once.
+            # A body that is not JSON comes from a web front end or a proxy, not
+            # from this forge's API. gitlab.com returns 403 with an HTML page for
+            # every path it does not serve; counting that as a rejected token
+            # would match all three forges.
             return ProbeResult(accepted=False, refused=False, status=status)
         if status == httpx.codes.OK:
             return ProbeResult(
@@ -156,7 +156,7 @@ class Provider(ABC):
         """Yield JSON list items across all pages, following RFC 5988 links.
 
         Both GitLab and GitHub return a Link header with rel="next"; httpx
-        exposes it via ``response.links``. The next URL already carries the
+        exposes it via ``response.links``. The next URL already contains the
         query string, so follow-up requests send no extra params.
         """
         url: str | None = path

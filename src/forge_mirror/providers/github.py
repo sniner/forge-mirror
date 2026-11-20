@@ -9,8 +9,8 @@ from forge_mirror.providers.base import Provider, Repo
 
 _USER_REPOS_PATH = "/user/repos"
 
-# github.com serves its API from a separate host, unlike Enterprise, which uses
-# /api/v3 on the web host — so only the public web host is rewritten.
+# github.com serves its API from a separate host. Enterprise uses /api/v3 on the
+# web host, so only the public web host is rewritten.
 _WEB_HOST = re.compile(r"^(https?://)(www\.)?github\.com/?$", re.IGNORECASE)
 
 

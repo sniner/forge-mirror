@@ -1,18 +1,19 @@
 # forge-mirror
 
-Creates pull mirrors (bare repositories) of **all** repositories visible to an
-access token on a Git forge and updates existing mirrors. Supports **GitLab**,
-**GitHub** and **Forgejo**. Ideal for periodic backups, e.g. via cron.
+Creates and updates bare mirrors of all repositories an access token can see on a
+Git forge. Supports **GitLab**, **GitHub** and **Forgejo**. Meant for periodic
+backups, for example from cron.
 
-- Clones new repositories with `git clone --mirror`.
-- Updates existing mirrors with `git remote update --prune`.
+- New repositories are cloned with `git clone --mirror`, existing mirrors are
+  updated with `git remote update --prune`.
 - Mirrors are stored under `<target-dir>/<namespace>/<repo>.git`.
 - The token is passed to git on each run and never stored in a mirror, so a new
   token applies to all existing mirrors. A credential helper in your git
   configuration, such as the macOS keychain, does not save it either.
 - Archived repositories are skipped by default.
-- Mirrors whose repository is gone from the forge are reported, and deleted on request (`--prune`).
-- Multiple repositories are processed in parallel (`--jobs`).
+- Mirrors whose repository no longer exists on the forge are reported, and
+  deleted with `--prune`.
+- Several repositories are processed in parallel (`--jobs`).
 
 ## Installation
 
@@ -22,13 +23,13 @@ Install the `forge-mirror` command with [uv](https://docs.astral.sh/uv/):
 uv tool install git+https://github.com/sniner/forge-mirror
 ```
 
-Update later with `uv tool upgrade forge-mirror`. To pin a specific release,
+Update it with `uv tool upgrade forge-mirror`. To install a specific release,
 append `@<tag>`, e.g. `git+https://github.com/sniner/forge-mirror@v0.2.0`.
 
 ## Usage
 
-A run mirrors exactly one forge, and each of the four settings is given either as
-a CLI argument or as an environment variable (arguments take precedence):
+A run mirrors one forge. Each of the four settings can be given as an option or
+as an environment variable; the option takes precedence:
 
 | Argument           | Environment variable    | Meaning                          |
 | ------------------ | ----------------------- | -------------------------------- |
@@ -37,25 +38,24 @@ a CLI argument or as an environment variable (arguments take precedence):
 | `--token`          | `FORGE_MIRROR_TOKEN`    | Access token                     |
 | `-d, --target-dir` | `FORGE_MIRROR_DIR`      | Target directory for the mirrors |
 
-### Which forge
+### Detecting the forge
 
-`--provider` defaults to `auto`, which asks GitLab, GitHub and Forgejo in turn
-for a single page of repositories — each with that forge's own authentication
-scheme, on its own listing endpoint. The others are being asked for a route they
-do not serve and answer `404`, so the one that returns a list is the forge that
-is there. That makes the answer a guarantee rather than a guess: whatever
-answered can also list the repositories, so a mistyped URL or a token missing a
-scope is reported before the first clone instead of halfway through the run.
+With the default `--provider auto`, forge-mirror requests one page of the
+repository listing from the GitLab, GitHub and Forgejo API in turn, each with
+that forge's authentication. The forges that are not there return `404`, and the
+first one that returns a list is used. Since this request already lists
+repositories with the token, a wrong URL or a token without the required scopes
+is reported before the first clone.
 
-Naming the forge with `--provider gitlab|github|forgejo` skips that request, and
-for GitHub it supplies the default URL `https://api.github.com`. The other two
-are self-hosted and have no default, so they need `--url`. A bare
-`https://github.com` is rewritten to `https://api.github.com`, since github.com
-serves its API from a separate host — unlike Enterprise, which uses `/api/v3` on
-the web host and is given in full as `https://ghe.example/api/v3`.
+`--provider gitlab|github|forgejo` skips the detection. For GitHub it also sets
+the default URL `https://api.github.com`. GitLab and Forgejo are self-hosted and
+need `--url`. A plain `https://github.com` is changed to `https://api.github.com`,
+because github.com serves its API from a separate host. GitHub Enterprise serves
+it under `/api/v3` on the web host; give that URL in full, e.g.
+`https://ghe.example/api/v3`.
 
-To see what autodetection makes of a URL without mirroring anything, add
-`--list` (below).
+To see which forge is detected without mirroring anything, use `--list` (see
+below).
 
 ### GitLab
 
@@ -67,30 +67,27 @@ uv run forge-mirror \
     --jobs 4
 ```
 
-The token needs the `read_api` scope (for listing) and, when cloning over HTTPS,
-`read_repository`. In `--ssh` mode only `read_api` is required, since the Git
-transfer uses your SSH key. Listing uses `membership=true`, so only projects the
-token's user belongs to are mirrored — on a self-hosted instance use an admin
-account to cover everything; on `gitlab.com` this avoids pulling in every public
-project on the platform.
+The token needs the `read_api` scope for the listing and `read_repository` for
+cloning over HTTPS. With `--ssh` only `read_api` is needed, because git uses your
+SSH key. Only projects the token's user is a member of are mirrored. On a
+self-hosted instance, use the token of an admin account to get all projects; on
+`gitlab.com` this keeps out the public projects of all other users.
 
 ### GitHub
 
 ```sh
 export FORGE_MIRROR_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
-# All repositories visible to the token (owner, collaborator, org member).
-# --provider github is what supplies the default URL https://api.github.com
+# All repositories the token can see (owner, collaborator, organization member).
+# --provider github sets the default URL https://api.github.com
 uv run forge-mirror --provider github -d /srv/backup/github
 
-# Restrict to a single user or organization
+# Only the repositories of one user or organization
 uv run forge-mirror --provider github -d /srv/backup/github --owner my-org
 ```
 
-The token needs read access to repository contents: a classic PAT with the
+The token needs read access to repository contents: a classic token with the
 `repo` scope, or a fine-grained token with **Contents: Read** and
-**Metadata: Read**. Without `--owner`, `GET /user/repos` lists everything the
-token can see; with `--owner` only that user's or organization's repositories
-are mirrored.
+**Metadata: Read**.
 
 ### Forgejo
 
@@ -101,60 +98,55 @@ uv run forge-mirror \
     --target-dir /srv/backup/forgejo
 ```
 
-Forgejo is self-hosted, so `--url` has no default; point it at the instance
-itself, the API path `/api/v1` is appended.
+Forgejo is self-hosted, so `--url` is required. Give the URL of the instance;
+forge-mirror appends the API path `/api/v1`.
 
-The token needs **two** scopes, both at **Read** level: **`user`** and
-**`repository`**. The `user` scope is the counter-intuitive one — Forgejo
-derives the required scope from the route group, and the listing endpoint is
-`/api/v1/user/repos`, so reaching it takes `read:user` on top of the
-`read:repository` that covers the repositories themselves and the Git transfer
-over HTTPS. Tick only one of them and the API answers `403` naming the other:
+The token needs two scopes, both at **Read** level: **`user`** and
+**`repository`**. `repository` covers the repositories and git over HTTPS. `user`
+is needed because Forgejo derives the required scope from the API path, and the
+listing is at `/api/v1/user/repos`. With only one of the two, the API returns
+`403` and names the missing one:
 
 ```
 token does not have at least one of required scope(s): [read:user]
 ```
 
-None of the remaining categories (`admin`, `organization`, `package`, `misc`, …)
-is required; organisation repositories are covered by `read:repository`. A token
-with no scope at all is refused even for public repositories. In `--ssh` mode
-the Git transfer uses your SSH key, but the listing still needs both scopes.
-Listing uses
-`/api/v1/user/repos`, which returns the repositories the token's user owns plus
-those they reach as a collaborator or through an organisation team — public
-repositories of *other* users on the instance are not pulled in.
+No other scope is needed; organization repositories are covered by `repository`.
+A token without any scope is rejected even for public repositories. With
+`--ssh`, git uses your SSH key, but the listing still needs both scopes.
 
-`--owner` is not available for Forgejo. The same API also serves **Gitea**,
-which this provider has not been tested against.
+The listing contains the repositories the token's user owns and those the user
+can access as a collaborator or through an organization team. Public
+repositories of other users on the instance are not included.
+
+`--owner` is not available for Forgejo. Gitea serves the same API, but has not
+been tested.
 
 ### Listing without mirroring
 
-`--list` prints the repositories a run would take, one per line, and stops
-there. Nothing is cloned, so `--target-dir` is not needed:
+`--list` prints the repositories a run would mirror, one per line, and exits.
+Nothing is cloned, so `--target-dir` is not needed:
 
 ```sh
 uv run forge-mirror --url https://gitlab.example.local --list
 ```
 
-The names go to standard output and everything the run has to say about itself
-to the log, so the list can be counted or filtered:
+The names go to standard output and the log to standard error, so the list can
+be counted or filtered:
 
 ```sh
 forge-mirror --url https://gitlab.example.local --list | wc -l
 ```
 
-This is the cheapest way to check that autodetection lands on the right forge
-and that the token carries the scopes it needs, before a first run pulls
-gigabytes. `--include-archived` widens the list exactly as it widens a run;
-`--prune` is refused alongside it, since a listing has nothing to delete.
+Use it to check the detected forge and the token's scopes before a first run
+downloads everything. `--include-archived` adds the archived repositories to the
+list, as it does for a run. `--list` cannot be combined with `--prune` or
+`--dry-run`.
 
-`--list` answers what the forge has. What a run would *do* with it is the
-question `--dry-run` answers, and the two are refused together.
+### Dry run
 
-### Trying a run without making it
-
-`--dry-run` reports what a run would clone, update and — together with
-`--prune` — delete, and does none of it:
+`--dry-run` shows what a run would clone, update and, with `--prune`, delete,
+and changes nothing:
 
 ```sh
 uv run forge-mirror --url https://gitlab.example.local -d /srv/backup --dry-run
@@ -162,25 +154,22 @@ uv run forge-mirror --url https://gitlab.example.local -d /srv/backup --dry-run
 
 ```
 INFO Dry run: nothing is cloned, updated or deleted
-INFO 71 repositories: 3 to clone, 68 to update (-v names the updates too)
+INFO 71 repositories: 3 to clone, 68 to update (-v lists the updates)
 INFO Would clone group/newcomer
-WARNING 1 mirror(s) have no repository on the forge; add --prune to see them as
-WARNING   deletions, and drop --dry-run to carry them out:
+WARNING 1 mirror(s) have no repository on the forge; with --prune they would be deleted:
 WARNING   /srv/backup/old-group/tools.git
-INFO Dry run finished, nothing was touched
+INFO Dry run finished, nothing was changed
 ```
 
-Repositories that would only be updated are the unremarkable majority of a
-settled mirror directory, so they are counted rather than listed; `-v` names
-them as well. `--dry-run --prune` is the pairing worth having before a real
-prune: it prints exactly the mirrors that deletion would take, and says so when
-`--prune-limit` would cancel the whole thing.
+Repositories that would only be updated are counted, not listed; `-v` lists them
+too. Before a real prune, run `--dry-run --prune`: it lists the mirrors that
+would be deleted, and says so when `--prune-limit` would stop the deletion.
 
 ### Stale mirrors
 
-When a repository is moved to a different group, its mirror stays behind at the
-old path and the repository is cloned again under the new one. Every run
-therefore lists the mirrors that no longer have a repository on the forge:
+When a repository is moved to another group, the mirror at the old path remains
+and the repository is cloned again under the new path. Every run lists the
+mirrors that no longer have a repository on the forge:
 
 ```
 WARNING 2 mirror(s) have no repository on the forge, pass --prune to delete them:
@@ -188,31 +177,33 @@ WARNING   /srv/backup/old-group/tools.git
 WARNING   /srv/backup/retired/prototype.git
 ```
 
-Deleting them is opt-in, since a mirror is usually the last copy of a repository:
+They are deleted only with `--prune`, because a mirror may be the last copy of a
+repository:
 
 ```sh
 uv run forge-mirror --url https://gitlab.example.local -d /srv/backup --prune
 ```
 
-`--prune` deletes the listed mirrors and the namespace directories they leave
-empty. Deletion never happens when it cannot be justified by a complete listing:
+`--prune` deletes the listed mirrors and the namespace directories left empty.
+It deletes nothing unless the listing is complete:
 
-- An API error aborts the run before anything is deleted — the listing is read
-  in full before the first mirror is touched, so a connection lost halfway
-  through pagination can never be mistaken for deleted repositories.
-- An empty listing (typically a token that lost its access) deletes nothing.
-- Archived repositories are kept, whether or not `--include-archived` is set.
-- More candidates than `--prune-limit` (default 10) cancels the deletion
-  completely — nothing is removed and the run exits non-zero. A jump like that
-  is usually a token that lost access to a group rather than a group that was
-  really deleted. Check the listed paths, then raise the limit for that run;
-  `0` turns the check off.
-- Only directories that are actually bare repositories are removed. Symlinks
-  and the `.git` directory of a working copy are left alone.
+- An API error aborts the run before anything is deleted. The listing is read in
+  full before the first mirror is changed, so an error during pagination cannot
+  make repositories look deleted.
+- An empty listing, usually caused by a token that lost its access, deletes
+  nothing.
+- Mirrors of archived repositories are kept, with or without
+  `--include-archived`.
+- If more mirrors would be deleted than `--prune-limit` allows (default 10),
+  nothing is deleted and the run exits non-zero. That many usually means the
+  token lost access to a group. Check the listed paths, then run again with a
+  higher limit; `0` disables the check.
+- Only bare repositories are deleted. Symlinks and the `.git` directory of a
+  working copy are left alone.
 
-Give each forge its own `--target-dir`: mirrors of a *different* forge below the
-same directory have no counterpart in the listing and count as stale. With
-`--owner`, only that owner's subdirectory is examined.
+Use a separate `--target-dir` for each forge: mirrors of another forge in the
+same directory are not in the listing and count as stale. With `--owner`, only
+that owner's subdirectory is checked.
 
 ### Common options
 
@@ -221,7 +212,7 @@ same directory have no counterpart in the listing and count as stale. With
 # switched to SSH as well, and back to HTTPS on a run without --ssh
 uv run forge-mirror --url https://gitlab.example.local -d /srv/backup --ssh
 
-# Include archived repositories as well
+# Include archived repositories
 uv run forge-mirror --url https://gitlab.example.local -d /srv/backup --include-archived
 ```
 
@@ -231,9 +222,9 @@ Further options: `--timeout` (HTTP timeout in seconds, default 30),
 A clone or update over HTTPS that receives less than 1 KB/s for two minutes is
 aborted and counts as failed, so a stalled connection does not hang the run.
 
-The exit code is `0` if all repositories were mirrored successfully, otherwise
-the number of repositories that failed to mirror or that `--prune` was unable to
-clean up (configuration and API errors return `1`).
+The exit code is `0` if all repositories were mirrored, otherwise the number of
+repositories that could not be mirrored or that `--prune` could not delete (at
+most 125). Configuration and API errors exit with `1`.
 
 ## Development
 

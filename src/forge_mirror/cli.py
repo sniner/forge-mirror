@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=PROVIDER_CHOICES,
         default=None,
         help="Forge to mirror from (env: FORGE_MIRROR_PROVIDER; default: auto, "
-        "which asks the forge at --url which one it is)",
+        "which detects the forge at --url)",
     )
     parser.add_argument(
         "--url",
@@ -50,19 +50,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--list",
         action="store_true",
-        help="List the repositories that would be mirrored, one per line, and "
-        "stop there; nothing is cloned, so --target-dir is not needed",
+        help="List the repositories a run would mirror, one per line, and exit; "
+        "--target-dir is not needed",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Report what a run would clone, update and (with --prune) delete, "
-        "and do none of it",
+        help="Show what a run would clone, update and (with --prune) delete, "
+        "change nothing",
     )
     parser.add_argument(
         "--ssh",
         action="store_true",
-        help="Use SSH URLs instead of HTTPS+token for cloning",
+        help="Use SSH instead of HTTPS with the token, also for existing mirrors",
     )
     parser.add_argument(
         "--include-archived",
@@ -72,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--prune",
         action="store_true",
-        help="Delete mirrors whose repository is gone from the forge; "
+        help="Delete mirrors whose repository no longer exists on the forge; "
         "without it they are only reported",
     )
     parser.add_argument(
@@ -80,8 +80,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=10,
         metavar="N",
-        help="Cancel the whole prune, deleting nothing, when more than N mirrors "
-        "would go (default: 10, 0 turns the check off)",
+        help="Delete nothing when more than N mirrors would be deleted "
+        "(default: 10, 0 disables the check)",
     )
     parser.add_argument(
         "-j",
@@ -106,16 +106,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point. Returns 0 if all repositories were mirrored successfully and
-    no stale mirror was left behind, otherwise the number of failures (capped at
+    """Entry point. Returns 0 if all repositories were mirrored and --prune
+    deleted every mirror it had to, otherwise the number of failures (at most
     125)."""
     args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
-    # httpx logs every request at INFO. Autodetection asks forges that are not
-    # there, so those lines would report a routine 404 as if something broke.
+    # httpx logs every request at INFO. Detection requests the endpoints of
+    # forges that are not there, and their 404 would look like an error.
     logging.getLogger("httpx").setLevel(
         logging.DEBUG if args.verbose else logging.WARNING
     )
@@ -126,8 +126,8 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("%s", exc)
         return 1
 
-    # Resolving the provider is its own step: until it is done there is no forge
-    # to name in an error message, and autodetection reports in its own words.
+    # Handled apart from the run below: until the forge is known, an error
+    # message cannot name it, and detection writes its own error messages.
     try:
         provider = create_provider(config)
     except ValueError as exc:
