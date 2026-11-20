@@ -7,6 +7,9 @@ access token on a Git forge and updates existing mirrors. Supports **GitLab**,
 - Clones new repositories with `git clone --mirror`.
 - Updates existing mirrors with `git remote update --prune`.
 - Mirrors are stored under `<target-dir>/<namespace>/<repo>.git`.
+- The token is passed to git on each run and never stored in a mirror, so a new
+  token applies to all existing mirrors. A credential helper in your git
+  configuration, such as the macOS keychain, does not save it either.
 - Archived repositories are skipped by default.
 - Mirrors whose repository is gone from the forge are reported, and deleted on request (`--prune`).
 - Multiple repositories are processed in parallel (`--jobs`).
@@ -214,7 +217,8 @@ same directory have no counterpart in the listing and count as stale. With
 ### Common options
 
 ```sh
-# SSH instead of HTTPS (requires a configured SSH key)
+# SSH instead of HTTPS (requires a configured SSH key); existing mirrors are
+# switched to SSH as well, and back to HTTPS on a run without --ssh
 uv run forge-mirror --url https://gitlab.example.local -d /srv/backup --ssh
 
 # Include archived repositories as well

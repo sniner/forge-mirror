@@ -1,4 +1,5 @@
 import logging
+import subprocess
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
@@ -10,17 +11,19 @@ import pytest
 import forge_mirror.mirror as mirror_mod
 from forge_mirror.config import Config
 from forge_mirror.mirror import (
+    ENV_GIT_PASSWORD,
     SyncResult,
     dry_run,
     find_stale_mirrors,
+    git_command,
     iter_local_mirrors,
     list_repos,
-    mask_token,
+    mirror_repo,
     remove_mirror,
     repo_path,
     sync_all,
 )
-from forge_mirror.providers.base import Repo
+from forge_mirror.providers.base import Credentials, Repo
 
 
 def make_repo(full_name: str = "group/repo", archived: bool = False) -> Repo:
@@ -71,14 +74,94 @@ def test_repo_path() -> None:
     assert repo_path(Path("/backup"), make_repo()) == Path("/backup/group/repo.git")
 
 
-def test_mask_token_hides_credentials() -> None:
-    masked = mask_token("https://oauth2:secret@example/group/repo.git")
-    assert "secret" not in masked
-    assert masked == "https://***@example/group/repo.git"
+@pytest.fixture
+def git_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Keep the user's own git configuration out of the git calls of a test."""
+    config = tmp_path / "gitconfig"
+    config.write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    return config
 
 
-def test_mask_token_passes_through_plain_url() -> None:
-    assert mask_token("https://example/x.git") == "https://example/x.git"
+def _git(*args: str) -> str:
+    """Run git for setting up or inspecting a test repository."""
+    result = subprocess.run(["git", *args], check=True, capture_output=True, text=True)
+    return result.stdout.strip()
+
+
+def _commit(repo: Path, message: str) -> str:
+    identity = ["-c", "user.name=Test", "-c", "user.email=test@example.com"]
+    _ = _git("-C", str(repo), *identity, "commit", "-q", "--allow-empty", "-m", message)
+    return _git("-C", str(repo), "rev-parse", "HEAD")
+
+
+def _source_repo(tmp_path: Path) -> Path:
+    """A local repository with one commit to mirror from."""
+    source = tmp_path / "source"
+    _ = _git("init", "-q", str(source))
+    _ = _commit(source, "first")
+    return source
+
+
+def test_git_command_hands_the_token_to_git_only(git_config: Path) -> None:
+    # A helper in the user's configuration, as a keychain would be: it must
+    # neither be asked for the token nor be given it to store.
+    trap = git_config.parent / "trap"
+    git_config.write_text(f"[credential]\n\thelper = !echo >>{trap}\n")
+    auth = Credentials("user", "secret")
+
+    command, env = git_command(["credential", "fill"], auth)
+    filled = subprocess.run(
+        command,
+        input="protocol=https\nhost=example.com\n\n",
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    command, env = git_command(["credential", "approve"], auth)
+    _ = subprocess.run(command, input=filled.stdout, env=env, check=True, text=True)
+
+    assert "username=user\npassword=secret\n" in filled.stdout
+    assert not any("secret" in arg for arg in command)
+    assert not trap.exists()
+
+
+def test_git_command_without_auth_has_no_helper() -> None:
+    command, env = git_command(["fetch"], None)
+
+    assert command == ["git", "fetch"]
+    assert ENV_GIT_PASSWORD not in env
+
+
+def test_mirror_repo_clones_then_updates(tmp_path: Path, git_config: Path) -> None:
+    source = _source_repo(tmp_path)
+    target = tmp_path / "mirrors"
+    repo = make_repo("g/source")
+
+    assert mirror_repo(repo, str(source), target, None)
+    head = _commit(source, "second")
+    assert mirror_repo(repo, str(source), target, None)
+
+    assert _git("--git-dir", str(repo_path(target, repo)), "rev-parse", "HEAD") == head
+
+
+def test_mirror_repo_removes_a_token_from_the_remote_url(
+    tmp_path: Path, git_config: Path
+) -> None:
+    source = _source_repo(tmp_path)
+    target = tmp_path / "mirrors"
+    repo = make_repo("g/source")
+    assert mirror_repo(repo, str(source), target, None)
+    mirror = repo_path(target, repo)
+    old_url = "https://oauth2:secret@example.com/g/source.git"
+    _ = _git("--git-dir", str(mirror), "remote", "set-url", "origin", old_url)
+
+    assert mirror_repo(repo, str(source), target, None)
+
+    assert _git("--git-dir", str(mirror), "remote", "get-url", "origin") == str(source)
+    assert "secret" not in (mirror / "config").read_text()
 
 
 @final
@@ -89,8 +172,8 @@ class _FakeProvider:
     def iter_repos(self) -> Iterator[Repo]:
         yield from self._repos
 
-    def clone_url(self, repo: Repo, *, use_ssh: bool) -> str:
-        return repo.ssh_url if use_ssh else repo.https_url
+    def credentials(self) -> Credentials:
+        return Credentials("user", "secret")
 
 
 @final
@@ -101,16 +184,47 @@ class _BrokenProvider:
         yield make_repo("g/a")
         raise httpx.ReadTimeout("page 2 timed out")
 
-    def clone_url(self, repo: Repo, *, use_ssh: bool) -> str:
-        return repo.https_url
+    def credentials(self) -> Credentials:
+        return Credentials("user", "secret")
 
 
 def _record(seen: list[str]):
-    def recorder(repo: Repo, clone_url: str, target_dir: Path) -> bool:
+    def recorder(
+        repo: Repo,
+        url: str,
+        target_dir: Path,
+        auth: Credentials | None,
+    ) -> bool:
         seen.append(repo.full_name)
         return True
 
     return recorder
+
+
+def test_sync_all_passes_the_token_only_for_https(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, Credentials | None]] = []
+
+    def recorder(
+        repo: Repo,
+        url: str,
+        target_dir: Path,
+        auth: Credentials | None,
+    ) -> bool:
+        calls.append((url, auth))
+        return True
+
+    monkeypatch.setattr(mirror_mod, "mirror_repo", recorder)
+    provider = _FakeProvider([make_repo("g/a")])
+
+    _ = sync_all(provider, make_config())
+    _ = sync_all(provider, make_config(use_ssh=True))
+
+    assert calls == [
+        ("https://example/g/a.git", Credentials("user", "secret")),
+        ("git@example:g/a.git", None),
+    ]
 
 
 def test_sync_all_skips_archived_by_default(monkeypatch: pytest.MonkeyPatch) -> None:

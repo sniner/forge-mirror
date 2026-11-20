@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com).
 
+## [Unreleased]
+
+### Fixed
+
+- **Updates** of existing mirrors use the token of the current run. git used the token stored in
+  the mirror when it was cloned, so once that token had expired or was replaced, every private
+  repository failed with `Authentication failed`
+
+### Changed
+
+- **Token storage**: the token is no longer written into the remote URL of a mirror, and a
+  credential helper in your git configuration (such as the macOS keychain) no longer saves a copy.
+  Mirrors cloned by an earlier version have the token removed from their URL on their next update.
+  A token that a helper has already saved stays there until you delete it
+- **`--ssh`** also switches existing mirrors to SSH, and back to HTTPS on a run without it
+
 ## [0.5.0] - 2026-08-10
 
 ### Breaking changes

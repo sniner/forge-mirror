@@ -2,7 +2,7 @@ import httpx
 import pytest
 import respx
 
-from forge_mirror.providers.base import Repo, describe_http_error
+from forge_mirror.providers.base import Credentials, Repo, describe_http_error
 from forge_mirror.providers.forgejo import ForgejoProvider
 from forge_mirror.providers.github import GitHubProvider
 from forge_mirror.providers.gitlab import GitLabProvider
@@ -12,32 +12,14 @@ GITHUB_URL = "https://api.github.com"
 FORGEJO_URL = "https://fj.example"
 
 
-def make_repo() -> Repo:
-    return Repo(
-        full_name="group/repo",
-        ssh_url="git@gl.example:group/repo.git",
-        https_url="https://gl.example/group/repo.git",
-        archived=False,
-    )
-
-
-def test_gitlab_clone_url_embeds_oauth2_token() -> None:
+def test_gitlab_credentials_use_oauth2() -> None:
     provider = GitLabProvider(GITLAB_URL, "secret", 10.0)
-    url = provider.clone_url(make_repo(), use_ssh=False)
-    assert url == "https://oauth2:secret@gl.example/group/repo.git"
+    assert provider.credentials() == Credentials("oauth2", "secret")
 
 
-def test_github_clone_url_embeds_x_access_token() -> None:
+def test_github_credentials_use_x_access_token() -> None:
     provider = GitHubProvider(GITHUB_URL, "secret", 10.0)
-    url = provider.clone_url(make_repo(), use_ssh=False)
-    assert url == "https://x-access-token:secret@gl.example/group/repo.git"
-
-
-def test_clone_url_ssh_is_unchanged() -> None:
-    provider = GitLabProvider(GITLAB_URL, "secret", 10.0)
-    assert (
-        provider.clone_url(make_repo(), use_ssh=True) == "git@gl.example:group/repo.git"
-    )
+    assert provider.credentials() == Credentials("x-access-token", "secret")
 
 
 @respx.mock
@@ -178,10 +160,9 @@ def test_other_forges_talk_to_the_url_as_given() -> None:
     assert ForgejoProvider.normalize_url(given) == given
 
 
-def test_forgejo_clone_url_embeds_token() -> None:
+def test_forgejo_credentials_use_token() -> None:
     provider = ForgejoProvider(FORGEJO_URL, "secret", 10.0)
-    url = provider.clone_url(make_repo(), use_ssh=False)
-    assert url == "https://token:secret@gl.example/group/repo.git"
+    assert provider.credentials() == Credentials("token", "secret")
 
 
 @respx.mock

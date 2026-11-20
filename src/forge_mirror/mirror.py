@@ -1,6 +1,7 @@
 """Clone repositories as bare mirrors, update them and drop stale ones."""
 
 import logging
+import os
 import shutil
 import subprocess
 from collections.abc import Iterable, Iterator
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import Protocol
 
 from forge_mirror.config import Config
-from forge_mirror.providers.base import Repo
+from forge_mirror.providers.base import Credentials, Repo
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ class RepoSource(Protocol):
 
     def iter_repos(self) -> Iterator[Repo]: ...
 
-    def clone_url(self, repo: Repo, *, use_ssh: bool) -> str: ...
+    def credentials(self) -> Credentials: ...
 
 
 def repo_path(target_dir: Path, repo: Repo) -> Path:
@@ -28,39 +29,83 @@ def repo_path(target_dir: Path, repo: Repo) -> Path:
     return target_dir / f"{repo.full_name}.git"
 
 
-def mask_token(url: str) -> str:
-    """Replace embedded credentials in a URL with *** for logging."""
-    scheme, sep, rest = url.partition("://")
-    if not sep or "@" not in rest:
-        return url
-    _, _, host_part = rest.partition("@")
-    return f"{scheme}://***@{host_part}"
+ENV_GIT_USERNAME = "FORGE_MIRROR_GIT_USERNAME"
+ENV_GIT_PASSWORD = "FORGE_MIRROR_GIT_PASSWORD"
+
+# Reads the credentials from the environment of the git process, so the token
+# is neither written to the mirror's config nor visible on a command line. git
+# asks a helper only after the server has answered 401, so public repositories
+# are still fetched without the token.
+_CREDENTIAL_HELPER = (
+    '!f() { if [ "$1" = get ]; then '
+    "printf 'username=%s\\npassword=%s\\n' "
+    f'"${ENV_GIT_USERNAME}" "${ENV_GIT_PASSWORD}"; fi; }}; f'
+)
+
+# The empty value clears the helpers from the user's git configuration. git
+# hands credentials that worked to every helper to store, so a keychain helper
+# would otherwise keep a copy of the token.
+_CREDENTIAL_OPTIONS = [
+    "-c",
+    "credential.helper=",
+    "-c",
+    f"credential.helper={_CREDENTIAL_HELPER}",
+]
 
 
-def _run_git(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, check=True, capture_output=True, text=True)
+def git_command(
+    args: list[str],
+    auth: Credentials | None,
+) -> tuple[list[str], dict[str, str]]:
+    """The command line and environment for running git with args.
+
+    Without auth (SSH) git authenticates with the user's key. A prompt is turned
+    off either way: with several jobs in parallel it would wait for input that
+    never comes.
+    """
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    if auth is None:
+        return ["git", *args], env
+    env[ENV_GIT_USERNAME] = auth.username
+    env[ENV_GIT_PASSWORD] = auth.password
+    return ["git", *_CREDENTIAL_OPTIONS, *args], env
 
 
-def mirror_repo(repo: Repo, clone_url: str, target_dir: Path) -> bool:
+def _run_git(args: list[str], auth: Credentials | None = None) -> None:
+    command, env = git_command(args, auth)
+    _ = subprocess.run(command, check=True, capture_output=True, text=True, env=env)
+
+
+def mirror_repo(
+    repo: Repo,
+    url: str,
+    target_dir: Path,
+    auth: Credentials | None,
+) -> bool:
     """Clone the repo as a mirror or update an existing one.
 
-    Returns True on success, False on a git error.
+    auth is the token for HTTPS, None for SSH. Returns True on success, False on
+    a git error.
     """
     path = repo_path(target_dir, repo)
 
     try:
         if path.exists():
             logger.info("Updating %s", repo.full_name)
-            _run_git(["git", "--git-dir", str(path), "remote", "update", "--prune"])
+            # A mirror cloned with the token in its URL keeps it there unless the
+            # URL is replaced, and replacing it on every update also moves an
+            # existing mirror to SSH or back when --ssh is added or dropped.
+            _run_git(["--git-dir", str(path), "remote", "set-url", "origin", url])
+            _run_git(["--git-dir", str(path), "remote", "update", "--prune"], auth)
         else:
             logger.info("Cloning %s", repo.full_name)
             path.parent.mkdir(parents=True, exist_ok=True)
-            _run_git(["git", "clone", "--mirror", clone_url, str(path)])
+            _run_git(["clone", "--mirror", url, str(path)], auth)
     except subprocess.CalledProcessError as exc:
         logger.error(
             "git error for %s (%s): %s",
             repo.full_name,
-            mask_token(clone_url),
+            url,
             (exc.stderr or "").strip(),
         )
         return False
@@ -329,9 +374,11 @@ def sync_all(provider: RepoSource, config: Config) -> SyncResult:
     repos = [r for r in listed if config.include_archived or not r.archived]
     logger.info("Mirroring %d repositories (jobs=%d)", len(repos), config.jobs)
 
+    auth = None if config.use_ssh else provider.credentials()
+
     def work(repo: Repo) -> bool:
-        clone_url = provider.clone_url(repo, use_ssh=config.use_ssh)
-        return mirror_repo(repo, clone_url, target_dir)
+        url = repo.ssh_url if config.use_ssh else repo.https_url
+        return mirror_repo(repo, url, target_dir, auth)
 
     with ThreadPoolExecutor(max_workers=config.jobs) as executor:
         results = list(executor.map(work, repos))

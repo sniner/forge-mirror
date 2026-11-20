@@ -51,6 +51,14 @@ class Repo:
     archived: bool
 
 
+@dataclass(frozen=True)
+class Credentials:
+    """User name and password git sends to the forge over HTTPS."""
+
+    username: str
+    password: str
+
+
 # Answered by a forge that serves the API but will not let this token read.
 _REFUSED = (httpx.codes.UNAUTHORIZED, httpx.codes.FORBIDDEN)
 
@@ -68,13 +76,14 @@ class Provider(ABC):
     """Base class for forge providers.
 
     Subclasses implement repository listing and the auth header; the shared
-    HTTP client, pagination and authenticated clone-URL construction live here.
+    HTTP client, pagination and the git credentials live here.
     """
 
     # Identifier used by --provider and in messages.
     name: ClassVar[str]
 
-    # Userinfo prepended to HTTPS clone URLs, e.g. "oauth2" or "x-access-token".
+    # User name git sends with the token over HTTPS, e.g. "oauth2" or
+    # "x-access-token".
     https_auth_user: ClassVar[str]
 
     # A one-page listing request, used to recognise the forge. Only this forge's
@@ -135,14 +144,9 @@ class Provider(ABC):
             )
         return ProbeResult(accepted=False, refused=status in _REFUSED, status=status)
 
-    def clone_url(self, repo: Repo, *, use_ssh: bool) -> str:
-        """Clone URL for the repo; for HTTPS the token is embedded."""
-        if use_ssh:
-            return repo.ssh_url
-        scheme, sep, rest = repo.https_url.partition("://")
-        if not sep:
-            return repo.https_url
-        return f"{scheme}://{self.https_auth_user}:{self._token}@{rest}"
+    def credentials(self) -> Credentials:
+        """The token in the form git sends it over HTTPS."""
+        return Credentials(username=self.https_auth_user, password=self._token)
 
     def _paginate_items(
         self,
