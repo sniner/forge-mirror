@@ -52,6 +52,16 @@ _CREDENTIAL_OPTIONS = [
     f"credential.helper={_CREDENTIAL_HELPER}",
 ]
 
+# git does not abort a stalled HTTPS transfer by itself, so a hung fetch would
+# block its job until the process is killed. While the server builds the pack, a
+# run without a terminal receives almost no data, so the time window is generous.
+_TRANSFER_OPTIONS = [
+    "-c",
+    "http.lowSpeedLimit=1000",
+    "-c",
+    "http.lowSpeedTime=120",
+]
+
 
 def git_command(
     args: list[str],
@@ -65,10 +75,10 @@ def git_command(
     """
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     if auth is None:
-        return ["git", *args], env
+        return ["git", *_TRANSFER_OPTIONS, *args], env
     env[ENV_GIT_USERNAME] = auth.username
     env[ENV_GIT_PASSWORD] = auth.password
-    return ["git", *_CREDENTIAL_OPTIONS, *args], env
+    return ["git", *_TRANSFER_OPTIONS, *_CREDENTIAL_OPTIONS, *args], env
 
 
 def _run_git(args: list[str], auth: Credentials | None = None) -> None:

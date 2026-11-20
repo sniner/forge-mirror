@@ -228,6 +228,9 @@ uv run forge-mirror --url https://gitlab.example.local -d /srv/backup --include-
 Further options: `--timeout` (HTTP timeout in seconds, default 30),
 `-v/--verbose` for DEBUG logging, `--help` for the full overview.
 
+A clone or update over HTTPS that receives less than 1 KB/s for two minutes is
+aborted and counts as failed, so a stalled connection does not hang the run.
+
 The exit code is `0` if all repositories were mirrored successfully, otherwise
 the number of repositories that failed to mirror or that `--prune` was unable to
 clean up (configuration and API errors return `1`).

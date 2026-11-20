@@ -131,8 +131,18 @@ def test_git_command_hands_the_token_to_git_only(git_config: Path) -> None:
 def test_git_command_without_auth_has_no_helper() -> None:
     command, env = git_command(["fetch"], None)
 
-    assert command == ["git", "fetch"]
+    assert command[-1] == "fetch"
+    assert not any(arg.startswith("credential.") for arg in command)
     assert ENV_GIT_PASSWORD not in env
+
+
+def test_git_command_sets_a_low_speed_limit(git_config: Path) -> None:
+    command, env = git_command(["config", "--get-regexp", r"^http\.lowspeed"], None)
+    result = subprocess.run(command, env=env, check=True, capture_output=True, text=True)
+
+    settings = dict(line.split() for line in result.stdout.splitlines())
+    assert int(settings["http.lowspeedlimit"]) > 0
+    assert int(settings["http.lowspeedtime"]) > 0
 
 
 def test_mirror_repo_clones_then_updates(tmp_path: Path, git_config: Path) -> None:

@@ -10,6 +10,8 @@ All notable changes to this project are documented here. The format is based on
 - **Updates** of existing mirrors use the token of the current run. git used the token stored in
   the mirror when it was cloned, so once that token had expired or was replaced, every private
   repository failed with `Authentication failed`
+- **Stalled transfers** over HTTPS no longer hang the run: a clone or update that receives less
+  than 1 KB/s for two minutes is aborted and reported as a git error
 
 ### Changed
 
