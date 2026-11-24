@@ -215,6 +215,21 @@ def test_raises_on_http_error() -> None:
         list(provider.iter_repos())
 
 
+@pytest.mark.parametrize(
+    ("timeout", "connect"),
+    [(30.0, 10.0), (60.0, 10.0), (5.0, 5.0)],
+)
+def test_the_wait_for_a_connection_is_shorter_than_for_a_response(
+    timeout: float,
+    connect: float,
+) -> None:
+    with GitLabProvider(GITLAB_URL, "t", timeout) as provider:
+        limits = provider._client.timeout  # pyright: ignore[reportPrivateUsage]
+
+    assert limits.connect == connect
+    assert limits.read == timeout
+
+
 def _status_error(status: int, **response_args: object) -> httpx.HTTPStatusError:
     request = httpx.Request("GET", f"{FORGEJO_URL}/api/v1/user/repos?limit=50")
     response = httpx.Response(status, request=request, **response_args)  # pyright: ignore[reportArgumentType]

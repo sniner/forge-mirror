@@ -6,10 +6,10 @@ import logging
 import httpx
 
 from forge_mirror import __version__
-from forge_mirror.config import build_config
+from forge_mirror.config import Config, build_config
 from forge_mirror.mirror import dry_run, list_repos, sync_all
 from forge_mirror.providers import PROVIDER_CHOICES, create_provider
-from forge_mirror.providers.base import describe_http_error
+from forge_mirror.providers.base import connect_timeout, describe_http_error
 
 logger = logging.getLogger("forge_mirror")
 
@@ -94,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--timeout",
         type=float,
         default=30.0,
-        help="HTTP timeout in seconds (default: 30)",
+        help="Seconds to wait for a response from the forge API (default: 30)",
     )
     parser.add_argument(
         "-v",
@@ -103,6 +103,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Verbose output (DEBUG level)",
     )
     return parser
+
+
+def _cannot_reach(url: str, exc: httpx.HTTPError, config: Config) -> str:
+    """The message for a request that got no response from the forge."""
+    if isinstance(exc, httpx.ConnectTimeout):
+        seconds = connect_timeout(config.timeout)
+        return (
+            f"Cannot reach {url}: no connection within {seconds:g} seconds; check the "
+            "URL and the network connection to the host"
+        )
+    return f"Cannot reach {url}: {exc}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -134,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("%s", exc)
         return 1
     except httpx.HTTPError as exc:
-        logger.error("Cannot reach %s: %s", config.base_url, exc)
+        logger.error("%s", _cannot_reach(config.base_url, exc, config))
         return 1
 
     try:
@@ -148,6 +159,10 @@ def main(argv: list[str] | None = None) -> int:
             result = sync_all(provider, config)
     except httpx.HTTPStatusError as exc:
         logger.error("%s API error: %s", provider.name, describe_http_error(exc))
+        return 1
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        # A named forge receives its first request here.
+        logger.error("%s", _cannot_reach(provider.base_url, exc, config))
         return 1
     except httpx.HTTPError as exc:
         logger.error("%s API error: %s", provider.name, exc)

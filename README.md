@@ -216,8 +216,14 @@ uv run forge-mirror --url https://gitlab.example.local -d /srv/backup --ssh
 uv run forge-mirror --url https://gitlab.example.local -d /srv/backup --include-archived
 ```
 
-Further options: `--timeout` (HTTP timeout in seconds, default 30),
-`-v/--verbose` for DEBUG logging, `--help` for the full overview.
+Further options: `--timeout` (seconds to wait for a response from the forge
+API, default 30), `-v/--verbose` for DEBUG logging, `--help` for the full
+overview.
+
+A forge that does not accept a connection within 10 seconds, for example because
+it is only reachable through a VPN that is not connected, is reported as
+unreachable and the run exits with `1`. A `--timeout` below 10 seconds also
+shortens this wait.
 
 A clone or update over HTTPS that receives less than 1 KB/s for two minutes is
 aborted and counts as failed, so a stalled connection does not hang the run.

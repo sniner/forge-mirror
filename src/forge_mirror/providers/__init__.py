@@ -54,6 +54,7 @@ def _detect(config: Config) -> Provider:
     a list is the one at the URL, and listing will work with this token. The
     other forges return 404 for a path they do not serve.
     """
+    logger.info("Detecting the forge at %s", config.base_url)
     refused: list[str] = []
     for cls in PROVIDER_CLASSES:
         provider = cls.from_config(config)

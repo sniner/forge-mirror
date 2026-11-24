@@ -3,6 +3,15 @@
 All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com).
 
+## [Unreleased]
+
+### Fixed
+
+- **Unreachable forge**: a run stops after 10 seconds without a connection, for example when the
+  forge is only reachable through a VPN that is not connected, and reports the host as
+  unreachable. Before, it waited the full `--timeout` of 30 seconds, and during forge detection
+  without any output. Detection now logs the URL when it starts
+
 ## [0.6.0] - 2026-11-20
 
 ### Fixed

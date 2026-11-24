@@ -13,6 +13,17 @@ from forge_mirror.config import Config
 
 logger = logging.getLogger(__name__)
 
+# A forge that can be reached accepts a connection in well under a second, also
+# through a VPN. A host that cannot be reached, such as one behind a VPN that is
+# down, usually drops the packets without a reply, and the attempt would wait the
+# whole --timeout. Ten seconds still leave room for several lost packets.
+CONNECT_TIMEOUT = 10.0
+
+
+def connect_timeout(timeout: float) -> float:
+    """Seconds to wait for a connection in a run with the given --timeout."""
+    return min(timeout, CONNECT_TIMEOUT)
+
 
 def _error_detail(response: httpx.Response) -> str:
     """The error message in the body of a failed response, if there is one.
@@ -98,7 +109,7 @@ class Provider(ABC):
         self._client = httpx.Client(
             base_url=base_url,
             headers=self._auth_headers(token),
-            timeout=timeout,
+            timeout=httpx.Timeout(timeout, connect=connect_timeout(timeout)),
             follow_redirects=True,
         )
 
